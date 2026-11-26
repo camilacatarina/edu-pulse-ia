@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import {
   Activity,
-  BarChart3,
   BookOpenCheck,
   Compass,
-  Cpu,
   LayoutDashboard,
-  LifeBuoy,
   LogIn,
   Menu,
   Settings,
@@ -19,11 +16,8 @@ import { labelRole } from '../../utils/labels';
 export type NavSectionId =
   | 'overview'
   | 'students'
-  | 'intelligence'
-  | 'paths'
   | 'activities'
-  | 'interventions'
-  | 'reports'
+  | 'support'
   | 'settings';
 
 interface AppShellProps {
@@ -33,13 +27,10 @@ interface AppShellProps {
 }
 
 const NAV_ITEMS: Array<{ id: NavSectionId; label: string; icon: React.FC<{ className?: string }> }> = [
-  { id: 'overview', label: 'Visão Geral', icon: LayoutDashboard },
-  { id: 'students', label: 'Estudantes e Turmas', icon: Users },
-  { id: 'intelligence', label: 'Central de Inteligência IA', icon: Cpu },
-  { id: 'paths', label: 'Trilhas de Aprendizagem', icon: Compass },
-  { id: 'activities', label: 'Atividades e Avaliações', icon: BookOpenCheck },
-  { id: 'interventions', label: 'Intervenções', icon: LifeBuoy },
-  { id: 'reports', label: 'Relatórios e Insights', icon: BarChart3 },
+  { id: 'overview', label: 'Painel de Risco', icon: LayoutDashboard },
+  { id: 'students', label: 'Médias e Alunos', icon: Users },
+  { id: 'activities', label: 'Revisões de Provas', icon: BookOpenCheck },
+  { id: 'support', label: 'Mapa por Matéria', icon: Compass },
   { id: 'settings', label: 'Configurações', icon: Settings },
 ];
 
@@ -50,6 +41,8 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
     firebaseUser,
     effectiveRole,
     setDemoRole,
+    autoPilotEnabled,
+    engineProcessing,
     signInWithGoogle,
     bannerNotice,
     clearBanner,
@@ -59,8 +52,8 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
 
   const currentNavLabel =
     effectiveRole === 'STUDENT'
-      ? 'Portal do Estudante'
-      : NAV_ITEMS.find((n) => n.id === activeTab)?.label || 'Visão Geral';
+      ? 'Meu Espaço de Estudos'
+      : NAV_ITEMS.find((n) => n.id === activeTab)?.label || 'Painel de Risco';
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -71,21 +64,26 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
         />
       )}
 
-      {/* Barra Lateral Azul-Marinho Profundo */}
+      {/* Barra Lateral */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-950 text-slate-100 flex flex-col justify-between transition-transform lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-60 bg-slate-950 text-slate-100 flex flex-col justify-between transition-transform lg:static lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div>
           <div className="h-16 px-5 flex items-center justify-between border-b border-slate-800/80">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
                 <Activity className="w-4 h-4 text-white" />
               </div>
-              <span className="font-display font-bold text-base tracking-tight text-white whitespace-nowrap">
-                EduPulse AI
-              </span>
+              <div className="min-w-0">
+                <span className="font-display font-bold text-sm tracking-tight text-white block leading-tight">
+                  EduPulse AI
+                </span>
+                <span className="text-[11px] text-sky-400 font-medium block">
+                  Ensino Médio
+                </span>
+              </div>
             </div>
             <button
               type="button"
@@ -108,7 +106,7 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-sky-600/20 text-sky-300 whitespace-nowrap"
               >
                 <Compass className="w-4 h-4 shrink-0" />
-                Meu Espaço de Aprendizagem
+                Meus Estudos
               </button>
             ) : (
               NAV_ITEMS.map((item) => {
@@ -137,10 +135,10 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
           </nav>
         </div>
 
-        {/* Seletor de Modo e Papel no Rodapé da Barra Lateral */}
+        {/* Seletor Simples no Rodapé */}
         <div className="p-4 border-t border-slate-800/80 space-y-3 text-xs">
           <div>
-            <p className="text-slate-400 mb-1.5">Modo de Dados</p>
+            <p className="text-slate-400 mb-1.5">Ambiente</p>
             <div className="grid grid-cols-2 gap-1 p-1 bg-slate-900 rounded-lg">
               <button
                 type="button"
@@ -149,7 +147,7 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
                   mode === 'DEMO' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                DEMO
+                Demo
               </button>
               <button
                 type="button"
@@ -158,22 +156,22 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
                   mode === 'LIVE' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                LIVE
+                Escola
               </button>
             </div>
           </div>
 
           {mode === 'DEMO' && (
             <div>
-              <p className="text-slate-400 mb-1.5">Visualizar Papel</p>
+              <p className="text-slate-400 mb-1.5">Visualizar como</p>
               <select
                 value={effectiveRole}
                 onChange={(e) => setDemoRole(e.target.value as 'ADMIN' | 'TEACHER' | 'STUDENT')}
                 className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-slate-200"
               >
-                <option value="TEACHER">Visão do Professor</option>
-                <option value="ADMIN">Administrador Escolar</option>
-                <option value="STUDENT">Portal do Estudante</option>
+                <option value="TEACHER">Professor</option>
+                <option value="ADMIN">Coordenação</option>
+                <option value="STUDENT">Aluno</option>
               </select>
             </div>
           )}
@@ -181,7 +179,7 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between gap-8 shrink-0">
+        <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between gap-6 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -191,21 +189,34 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
             >
               <Menu className="w-5 h-5" />
             </button>
-            <span className="text-sm font-medium text-slate-600 truncate">
-              EduPulse AI / <span className="text-slate-900 font-semibold">{currentNavLabel}</span>
+            <span className="text-sm font-medium text-slate-500 truncate">
+              Ensino Médio / <span className="text-slate-900 font-semibold">{currentNavLabel}</span>
             </span>
           </div>
 
-          <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-600">
-            <span className="whitespace-nowrap shrink-0">
-              Modo: <strong className={mode === 'DEMO' ? 'text-amber-700' : 'text-emerald-700'}>{mode}</strong>
+          <div className="flex items-center gap-4 shrink-0">
+            {effectiveRole !== 'STUDENT' && (
+              <span
+                className={`hidden md:inline text-xs font-semibold whitespace-nowrap ${
+                  engineProcessing
+                    ? 'text-sky-700'
+                    : autoPilotEnabled
+                      ? 'text-emerald-700'
+                      : 'text-slate-400'
+                }`}
+              >
+                {engineProcessing
+                  ? 'IA processando...'
+                  : autoPilotEnabled
+                    ? 'IA Autônoma Ativa'
+                    : 'IA em Pausa'}
+              </span>
+            )}
+            <span className="hidden sm:inline text-xs text-slate-500 whitespace-nowrap">
+              {mode === 'DEMO' ? 'Modo Demo' : 'Conectado'} ·{' '}
+              <strong className="text-slate-800">{labelRole(effectiveRole)}</strong>
             </span>
-            <span className="whitespace-nowrap shrink-0">
-              Papel: <strong className="text-slate-900">{labelRole(effectiveRole)}</strong>
-            </span>
-          </nav>
 
-          <div className="shrink-0">
             {!firebaseUser ? (
               <button
                 type="button"
@@ -221,7 +232,7 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
                 onClick={() => onSelectTab('settings')}
                 className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 whitespace-nowrap shrink-0"
               >
-                Conta e Governança
+                Minha Conta
               </button>
             )}
           </div>
@@ -248,7 +259,7 @@ export const AppShell: React.FC<AppShellProps> = ({ activeTab, onSelectTab, chil
           </div>
         )}
 
-        <main className="flex-1 p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+        <main className="flex-1 p-6 lg:p-8 max-w-[1320px] w-full mx-auto">
           {children}
         </main>
       </div>

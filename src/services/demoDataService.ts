@@ -15,6 +15,7 @@ import {
   Student,
   Subject,
 } from '../types/domain';
+import { formatStructuredExamReview } from '../utils/pedagogicalAnalytics';
 
 export interface WorkspaceDataset {
   institution: Institution;
@@ -33,27 +34,43 @@ export interface WorkspaceDataset {
   consentRecords: ConsentRecord[];
 }
 
-const DEMO_INSTITUTION_ID = 'demo_horizon_academy';
+const DEMO_INSTITUTION_ID = 'demo_colegio_horizonte_em';
 const DEMO_STAFF_UID = 'demo_teacher_uid';
 
-const FIRST_NAMES = [
-  'Lucas', 'Sophia', 'Mateus', 'Elena', 'Gabriel', 'Isabella', 'Noah', 'Maya',
-  'Rafael', 'Clara', 'Enzo', 'Valentina', 'Samuel', 'Alice', 'Daniel', 'Laura',
-  'Benjamin', 'Helena', 'Arthur', 'Beatriz', 'Henrique', 'Olívia', 'Pedro', 'Júlia',
-  'Caio', 'Camila', 'Miguel', 'Lívia', 'Theo', 'Ana',
+// Perfis realistas do Ensino Médio com matérias fortes e fracas distintas
+const STUDENT_PROFILES: Array<{
+  name: string;
+  scoresBySub: [number, number, number, number, number]; // MAT, FIS, QUI, PORT, BIO
+}> = [
+  { name: 'Lucas Martins', scoresBySub: [48, 42, 55, 86, 78] },       // Risco Máximo: ruim em Física/Mat, bom em Português
+  { name: 'Sophia Ribeiro', scoresBySub: [93, 89, 71, 84, 79] },      // Excelente em Exatas
+  { name: 'Mateus Carvalho', scoresBySub: [52, 49, 54, 68, 58] },     // Risco Máximo: 4 matérias < 6,0
+  { name: 'Helena Ferreira', scoresBySub: [74, 68, 72, 92, 88] },     // Melhor em Português e Biologia
+  { name: 'Gabriel Souza', scoresBySub: [82, 79, 56, 63, 74] },       // Atenção em Química
+  { name: 'Isabella Costa', scoresBySub: [44, 51, 58, 76, 81] },      // Risco Máximo em Exatas, boa em Biologia
+  { name: 'Rafael Almeida', scoresBySub: [86, 84, 81, 69, 75] },      // Regular, mais fraco em Português
+  { name: 'Clara Mendes', scoresBySub: [78, 74, 88, 91, 94] },        // Excelente em Bio/Português
+  { name: 'Enzo Oliveira', scoresBySub: [39, 45, 48, 61, 56] },       // Risco Máximo crítico
+  { name: 'Valentina Rocha', scoresBySub: [66, 54, 72, 88, 83] },     // Atenção em Física, forte em Português
+  { name: 'Pedro Henrique', scoresBySub: [90, 86, 83, 74, 79] },      // Forte em Matemática
+  { name: 'Júlia Nascimento', scoresBySub: [57, 62, 53, 84, 76] },    // Risco Máximo (Mat + Qui < 6,0)
+  { name: 'Arthur Lima', scoresBySub: [76, 81, 79, 55, 72] },         // Atenção em Português
+  { name: 'Beatriz Santos', scoresBySub: [84, 77, 89, 90, 92] },      // Ótima em Biologia e Português
+  { name: 'Caio Barbosa', scoresBySub: [46, 52, 64, 58, 71] },        // Risco Máximo (Mat, Fis, Port < 6,0)
+  { name: 'Camila Pereira', scoresBySub: [79, 75, 82, 87, 84] },      // Regular em todas
+  { name: 'Daniel Teixeira', scoresBySub: [68, 58, 63, 79, 85] },     // Atenção em Física, forte em Bio
+  { name: 'Laura Gomes', scoresBySub: [88, 84, 80, 93, 91] },         // Alto desempenho geral
 ];
 
-const LAST_INITIALS = ['M.', 'S.', 'R.', 'C.', 'L.', 'F.', 'T.', 'A.', 'B.', 'P.', 'G.', 'N.'];
-
-function deterministicScore(seed: number, min: number, max: number): number {
+function deterministicOffset(seed: number, range: number): number {
   const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
   const frac = x - Math.floor(x);
-  return Math.round(min + frac * (max - min));
+  return Math.round((frac * 2 - 1) * range);
 }
 
 function statusFromScore(score: number): PedagogicalStatus {
-  if (score >= 87) return 'Mastering';
-  if (score >= 73) return 'Progressing';
+  if (score >= 85) return 'Mastering';
+  if (score >= 72) return 'Progressing';
   if (score >= 60) return 'Additional Practice Recommended';
   return 'Needs Reinforcement';
 }
@@ -63,8 +80,8 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
 
   const institution: Institution = {
     id: DEMO_INSTITUTION_ID,
-    name: 'Instituto Horizonte de Ensino (DADOS DEMO)',
-    joinCode: 'DEMO-HORIZON',
+    name: 'Colégio Horizonte — Ensino Médio',
+    joinCode: 'EM-HORIZON',
     ownerUid: DEMO_STAFF_UID,
     staffUids: [DEMO_STAFF_UID],
     retentionDays: 365,
@@ -72,89 +89,100 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
   };
 
   const subjects: Subject[] = [
-    { id: 'sub_math', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Matemática', code: 'MAT', createdAt: baseDate },
-    { id: 'sub_phys', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Ciências Físicas', code: 'FIS', createdAt: baseDate },
-    { id: 'sub_lang', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Língua Portuguesa', code: 'PORT', createdAt: baseDate },
-    { id: 'sub_bio', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Biologia e Vida', code: 'BIO', createdAt: baseDate },
-    { id: 'sub_comp', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Lógica Computacional', code: 'COMP', createdAt: baseDate },
+    { id: 'sub_mat', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Matemática', code: 'MAT', createdAt: baseDate },
+    { id: 'sub_fis', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Física', code: 'FIS', createdAt: baseDate },
+    { id: 'sub_qui', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Química', code: 'QUI', createdAt: baseDate },
+    { id: 'sub_por', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Português e Redação', code: 'PORT', createdAt: baseDate },
+    { id: 'sub_bio', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: 'Biologia', code: 'BIO', createdAt: baseDate },
   ];
 
   const competencies: Competency[] = [
     {
-      id: 'comp_math_eq1',
+      id: 'comp_mat_fun',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_math',
-      code: 'MAT-EQ1',
-      name: 'Equações de Primeiro Grau',
-      description: 'Resolução de equações lineares com uma incógnita usando operações inversas e distributiva.',
-      gradeLevel: '8º Ano',
+      subjectId: 'sub_mat',
+      code: 'MAT-FUN',
+      name: 'Funções Afins e Quadráticas',
+      description: 'Análise de gráficos, raízes, vértice da parábola e modelagem de problemas cotidianos (BNCC EM13MAT302).',
+      gradeLevel: '1ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_math_frac',
+      id: 'comp_mat_prb',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_math',
-      code: 'MAT-FR2',
-      name: 'Frações e Raciocínio Proporcional',
-      description: 'Operações com frações racionais, razões equivalentes e proporcionalidade direta.',
-      gradeLevel: '7º Ano',
+      subjectId: 'sub_mat',
+      code: 'MAT-PRB',
+      name: 'Probabilidade e Análise Combinatória',
+      description: 'Princípio multiplicativo, arranjos, combinações e cálculo de probabilidade condicional (ENEM).',
+      gradeLevel: '2ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_phys_kin',
+      id: 'comp_fis_cin',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_phys',
-      code: 'FIS-CIN1',
-      name: 'Movimento Uniforme e Gráficos',
-      description: 'Interpretação de gráficos de posição por tempo e cálculo de velocidade média.',
-      gradeLevel: '9º Ano',
+      subjectId: 'sub_fis',
+      code: 'FIS-CIN',
+      name: 'Cinemática e Leis de Newton',
+      description: 'Movimento uniformemente variado, leitura de gráficos v×t e aplicação das leis da dinâmica.',
+      gradeLevel: '1ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_phys_energy',
+      id: 'comp_fis_ele',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_phys',
-      code: 'FIS-EN2',
-      name: 'Conservação de Energia Mecânica',
-      description: 'Análise de transformações entre energia cinética e energia potencial gravitacional.',
-      gradeLevel: '9º Ano',
+      subjectId: 'sub_fis',
+      code: 'FIS-ELE',
+      name: 'Eletrodinâmica e Circuitos',
+      description: 'Leis de Ohm, associação de resistores e cálculo de potência elétrica.',
+      gradeLevel: '3ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_lang_arg',
+      id: 'comp_qui_est',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_lang',
-      code: 'PORT-ARG1',
-      name: 'Argumentação Baseada em Evidências',
-      description: 'Avaliação de argumentos textuais e estruturação coerente de teses.',
-      gradeLevel: '8º Ano',
+      subjectId: 'sub_qui',
+      code: 'QUI-EST',
+      name: 'Estequiometria e Cálculo de Mol',
+      description: 'Balanceamento de equações químicas, massa molar e rendimento de reações.',
+      gradeLevel: '2ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_lang_syn',
+      id: 'comp_qui_org',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_lang',
-      code: 'PORT-SIN2',
-      name: 'Síntese Entre Múltiplos Textos',
-      description: 'Comparação e síntese de informações em textos argumentativos e informativos.',
-      gradeLevel: '9º Ano',
+      subjectId: 'sub_qui',
+      code: 'QUI-ORG',
+      name: 'Funções Orgânicas e Isomeria',
+      description: 'Identificação de cadeias carbônicas, grupos funcionais oxigenados e nomenclatura IUPAC.',
+      gradeLevel: '3ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_bio_cell',
+      id: 'comp_por_int',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_bio',
-      code: 'BIO-CEL1',
-      name: 'Respiração Celular e Transporte',
-      description: 'Compreensão do transporte de membrana e produção celular de ATP.',
-      gradeLevel: '8º Ano',
+      subjectId: 'sub_por',
+      code: 'PORT-INT',
+      name: 'Leitura Crítica e Intertextualidade',
+      description: 'Inferência de sentidos, recursos estilísticos e análise de textos multimodais.',
+      gradeLevel: '1ª Série EM',
+      createdAt: baseDate,
+    },
+    {
+      id: 'comp_por_arg',
+      institutionId: DEMO_INSTITUTION_ID,
+      staffUids: [DEMO_STAFF_UID],
+      subjectId: 'sub_por',
+      code: 'PORT-ARG',
+      name: 'Redação Dissertativo-Argumentativa (ENEM)',
+      description: 'Construção de tese, repertório sociocultural produtivo, coesão e proposta de intervenção.',
+      gradeLevel: '3ª Série EM',
       createdAt: baseDate,
     },
     {
@@ -162,42 +190,29 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
       subjectId: 'sub_bio',
-      code: 'BIO-ECO2',
-      name: 'Dinâmica Trófica de Ecossistemas',
-      description: 'Modelagem do fluxo de energia e equilíbrio populacional em cadeias tróficas.',
-      gradeLevel: '7º Ano',
+      code: 'BIO-ECO',
+      name: 'Ecologia e Dinâmica de Ecossistemas',
+      description: 'Ciclos biogeoquímicos, relações ecológicas e impactos ambientais contemporâneos.',
+      gradeLevel: '2ª Série EM',
       createdAt: baseDate,
     },
     {
-      id: 'comp_comp_alg',
+      id: 'comp_bio_gen',
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_comp',
-      code: 'COMP-ALG1',
-      name: 'Decomposição Algorítmica e Laços',
-      description: 'Construção de raciocínio lógico iterativo e verificação passo a passo.',
-      gradeLevel: '8º Ano',
-      createdAt: baseDate,
-    },
-    {
-      id: 'comp_comp_data',
-      institutionId: DEMO_INSTITUTION_ID,
-      staffUids: [DEMO_STAFF_UID],
-      subjectId: 'sub_comp',
-      code: 'COMP-DAD2',
-      name: 'Modelagem Estruturada de Dados',
-      description: 'Representação organizada de entidades e relacionamentos escolares.',
-      gradeLevel: '9º Ano',
+      subjectId: 'sub_bio',
+      code: 'BIO-GEN',
+      name: 'Genética Mendeliana e Molecular',
+      description: 'Herança genética, síntese proteica e interpretação de heredogramas.',
+      gradeLevel: '3ª Série EM',
       createdAt: baseDate,
     },
   ];
 
   const classes: SchoolClass[] = [
-    { id: 'cls_7a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '7º A — Turma Investigativa', gradeLevel: '7º Ano', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Profª. Helena Costa', createdAt: baseDate },
-    { id: 'cls_8a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '8º A — Fundamentos STEM', gradeLevel: '8º Ano', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Prof. Marcus Silva', createdAt: baseDate },
-    { id: 'cls_8b', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '8º B — Análise Aplicada', gradeLevel: '8º Ano', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Profª. Clara Mendes', createdAt: baseDate },
-    { id: 'cls_9a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '9º A — Aprofundamento Exatas', gradeLevel: '9º Ano', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Prof. Rafael Duarte', createdAt: baseDate },
-    { id: 'cls_9b', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '9º B — Ciências Integradas', gradeLevel: '9º Ano', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Profª. Beatriz Alves', createdAt: baseDate },
+    { id: 'cls_1a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '1ª Série A', gradeLevel: '1ª Série EM', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Prof. Marcus Silva', createdAt: baseDate },
+    { id: 'cls_2a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '2ª Série A', gradeLevel: '2ª Série EM', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Profª. Clara Mendes', createdAt: baseDate },
+    { id: 'cls_3a', institutionId: DEMO_INSTITUTION_ID, staffUids: [DEMO_STAFF_UID], name: '3ª Série A (ENEM)', gradeLevel: '3ª Série EM', academicYear: '2026', teacherUid: DEMO_STAFF_UID, teacherName: 'Prof. Rafael Duarte', createdAt: baseDate },
   ];
 
   const subjectIdsAll = subjects.map((s) => s.id);
@@ -214,60 +229,58 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
 
   subjects.forEach((sub, idx) => {
     const comp = competencies[idx * 2];
-    const cls = classes[idx];
+    const cls = classes[idx % classes.length];
     assessments.push({
-      id: `asmt_demo_${idx + 1}`,
+      id: `asmt_em_${idx + 1}`,
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
       classId: cls.id,
       subjectId: sub.id,
       competencyId: comp.id,
-      title: `Avaliação Diagnóstica de ${sub.name} — ${comp.name}`,
+      title: `Prova Bimestral: ${sub.name} — ${comp.name}`,
       type: 'Diagnostic Assessment',
       difficulty: 'Intermediate',
-      isHighImpact: false,
+      isHighImpact: true,
       createdByUid: DEMO_STAFF_UID,
       createdAt: baseDate,
       questions: [
         {
           id: `aq_${idx}_1`,
-          prompt: `Qual princípio orienta a resolução de problemas em ${comp.name}?`,
+          prompt: `Em uma questão de ${sub.name} (${comp.name}), qual estratégia garante maior precisão na resolução?`,
           questionType: 'multiple_choice',
           options: [
-            'Verificação sistemática passo a passo respeitando as regras da competência',
-            'Pular etapas intermediárias sem conferir as restrições',
-            'Ignorar unidades de medida e condições iniciais',
-            'Estimar valores sem validar a igualdade',
+            'Extrair os dados do enunciado, verificar unidades/condições e aplicar o modelo conceitual passo a passo',
+            'Aplicar fórmulas de forma mecânica sem interpretar o contexto do problema',
+            'Descartar gráficos e restrições de domínio antes de calcular',
+            'Escolher o resultado aproximado sem conferir as etapas',
           ],
-          correctAnswer: 'Verificação sistemática passo a passo respeitando as regras da competência',
-          explanation: `Conferir cada passo em ${comp.code} garante precisão conceitual.`,
+          correctAnswer: 'Extrair os dados do enunciado, verificar unidades/condições e aplicar o modelo conceitual passo a passo',
+          explanation: `Interpretar os dados e validar condições de existência é essencial em ${comp.code}.`,
         },
         {
           id: `aq_${idx}_2`,
-          prompt: `Verdadeiro ou Falso: Revisar pré-requisitos acelera o domínio em ${comp.name}.`,
+          prompt: `Verdadeiro ou Falso: Relacionar o conceito de ${comp.name} a situações-problema do ENEM facilita a transferência do conhecimento.`,
           questionType: 'true_false',
           options: ['Verdadeiro', 'Falso'],
           correctAnswer: 'Verdadeiro',
-          explanation: 'O reforço de pré-requisitos fortalece a aprendizagem em tarefas complexas.',
+          explanation: 'A contextualização fortalece a compreensão profunda exigida no Ensino Médio.',
         },
       ],
     });
   });
 
-  for (let i = 0; i < 60; i++) {
-    const classIdx = Math.floor(i / 12);
+  STUDENT_PROFILES.forEach((profile, i) => {
+    const classIdx = Math.floor(i / 6);
     const cls = classes[classIdx];
     const num = String(i + 1).padStart(3, '0');
     const studentId = `stu_demo_${num}`;
-    const pseudonymId = `STU-D${num}`;
-    const firstName = FIRST_NAMES[i % FIRST_NAMES.length];
-    const lastInit = LAST_INITIALS[(i * 3 + classIdx) % LAST_INITIALS.length];
-    const displayName = `${firstName} ${lastInit} (DEMO)`;
+    const pseudonymId = `EM-${num}`;
 
-    const basePerf = deterministicScore(i + 11, 52, 95);
-    const recentTrend = deterministicScore(i + 47, -4, 9);
-    const avgScore = Math.min(98, Math.max(48, basePerf + Math.round(recentTrend / 2)));
-    const completionRate = Math.min(100, Math.max(58, deterministicScore(i + 91, 64, 99)));
+    const avgScore =
+      Math.round(
+        (profile.scoresBySub.reduce((a, b) => a + b, 0) / profile.scoresBySub.length) * 10
+      ) / 10;
+    const completionRate = Math.min(99, Math.max(58, Math.round(avgScore + 8 + deterministicOffset(i + 5, 6))));
     const pedStatus = statusFromScore(avgScore);
 
     students.push({
@@ -277,7 +290,7 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       studentOwnerUid: i === 0 ? 'demo_student_active' : '',
       classId: cls.id,
       pseudonymId,
-      displayName,
+      displayName: profile.name,
       gradeLevel: cls.gradeLevel,
       pedagogicalStatus: pedStatus,
       averageScore: avgScore,
@@ -287,32 +300,96 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       updatedAt: '2026-11-25T16:30:00.000Z',
     });
 
-    for (let w = 0; w < 3; w++) {
-      const compIdx = (i + w * 2) % competencies.length;
-      const comp = competencies[compIdx];
-      const asmt = assessments[Math.floor(compIdx / 2)];
-      const pct = Math.min(100, Math.max(42, avgScore + (w - 1) * 4 + deterministicScore(i * 7 + w, -6, 6)));
-      const day = 8 + w * 7;
+    // Gerar 1 a 2 provas por matéria para os 5 componentes curriculares
+    subjects.forEach((sub, sIdx) => {
+      const baseSubScore = profile.scoresBySub[sIdx];
+      const subComps = competencies.filter((c) => c.subjectId === sub.id);
+      const primaryComp =
+        subComps.find((c) => c.gradeLevel === cls.gradeLevel) || subComps[0];
+      const asmt = assessments[sIdx];
+
+      // Prova 1 (já revisada pela IA para histórico inicial)
+      const p1 = Math.min(100, Math.max(25, baseSubScore + deterministicOffset(i * 11 + sIdx, 4)));
+      const isPendingAiReview = i < 6 && (baseSubScore < 60 || sIdx === 0 || sIdx === 1);
+
       assessmentResults.push({
-        id: `res_demo_${num}_${w + 1}`,
+        id: `res_demo_${num}_${sub.code.toLowerCase()}_1`,
         institutionId: DEMO_INSTITUTION_ID,
         staffUids: [DEMO_STAFF_UID],
         studentOwnerUid: i === 0 ? 'demo_student_active' : '',
         assessmentId: asmt.id,
         studentId,
-        subjectId: comp.subjectId,
-        competencyId: comp.id,
-        score: pct,
+        subjectId: sub.id,
+        competencyId: primaryComp.id,
+        score: p1,
         maxScore: 100,
-        percentage: pct,
-        teacherReviewed: w < 2,
-        aiPreliminaryFeedback:
-          pct < 72
-            ? `Prática guiada recomendada na competência ${comp.name}.`
-            : `Bom raciocínio demonstrado em ${comp.code}.`,
-        submittedAt: `2026-11-${String(day).padStart(2, '0')}T14:20:00.000Z`,
+        percentage: p1,
+        teacherReviewed: !isPendingAiReview && p1 >= 60,
+        aiPreliminaryFeedback: isPendingAiReview
+          ? ''
+          : formatStructuredExamReview({
+              verdict:
+                p1 < 60
+                  ? `Risco de reprovação em ${sub.name} (nota ${(p1 / 10).toFixed(1).replace('.', ',')}).`
+                  : p1 >= 80
+                    ? `Desempenho sólido em ${sub.name}.`
+                    : `Desempenho regular em ${sub.name}, com espaço para consolidação.`,
+              whatWentWell:
+                p1 >= 70
+                  ? `Domínio consistente dos conceitos introdutórios de ${primaryComp.name}.`
+                  : `Compreensão parcial da leitura inicial do enunciado em ${primaryComp.code}.`,
+              whereStruggled:
+                p1 < 60
+                  ? `Erros recorrentes na resolução intermediária e aplicação de regras em ${primaryComp.name}.`
+                  : p1 < 80
+                    ? `Pequenos deslizes em questões contextualizadas de maior interpretação.`
+                    : `Sem lacunas críticas registradas nesta prova.`,
+              recommendation:
+                p1 < 60
+                  ? `Plano automático de recuperação atribuído com foco em ${primaryComp.name}.`
+                  : `Manter ritmo com revisão rápida antes do próximo simulado.`,
+            }),
+        submittedAt: `2026-11-${String(12 + sIdx * 2).padStart(2, '0')}T14:20:00.000Z`,
       });
-    }
+
+      // Prova 2 mais recente nas 2 principais matérias críticas ou destaque
+      if (sIdx < 2) {
+        const p2 = Math.min(100, Math.max(22, baseSubScore + (baseSubScore < 60 ? -3 : 2)));
+        const leaveUnreviewedForAutoAi = i === 0 || i === 2 || i === 5 || i === 8;
+        assessmentResults.push({
+          id: `res_demo_${num}_${sub.code.toLowerCase()}_2`,
+          institutionId: DEMO_INSTITUTION_ID,
+          staffUids: [DEMO_STAFF_UID],
+          studentOwnerUid: i === 0 ? 'demo_student_active' : '',
+          assessmentId: asmt.id,
+          studentId,
+          subjectId: sub.id,
+          competencyId: (subComps[1] || primaryComp).id,
+          score: p2,
+          maxScore: 100,
+          percentage: p2,
+          teacherReviewed: false,
+          aiPreliminaryFeedback: leaveUnreviewedForAutoAi
+            ? ''
+            : formatStructuredExamReview({
+                verdict:
+                  p2 < 60
+                    ? `Alerta em ${sub.name}: nota ${(p2 / 10).toFixed(1).replace('.', ',')}.`
+                    : `Evolução estável em ${sub.name}.`,
+                whatWentWell: `Boa identificação das informações iniciais das questões de ${sub.name}.`,
+                whereStruggled:
+                  p2 < 60
+                    ? `Dificuldade na etapa de equacionamento e interpretação em ${primaryComp.name}.`
+                    : `Atenção pontual na conferência de resultados finais.`,
+                recommendation:
+                  p2 < 60
+                    ? `IA preparou lista de recuperação automática para elevar a média acima de 6,0.`
+                    : `Aprofundamento opcional estilo ENEM.`,
+              }),
+          submittedAt: `2026-11-${String(22 + sIdx).padStart(2, '0')}T10:45:00.000Z`,
+        });
+      }
+    });
 
     consentRecords.push({
       id: `cons_demo_${num}`,
@@ -325,14 +402,21 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       updatedByUid: DEMO_STAFF_UID,
       updatedAt: baseDate,
     });
-  }
+  });
 
-  const spotlightStudents = students.filter((s, idx) => s.averageScore < 74 || idx < 8).slice(0, 14);
+  // Gerar atividades e planos iniciais para os alunos com prioridade máxima ou atenção
+  const spotlightStudents = students.filter((s) => s.averageScore < 72).slice(0, 7);
 
   spotlightStudents.forEach((stu, idx) => {
-    const comp = competencies[idx % competencies.length];
-    const sub = subjects.find((s) => s.id === comp.subjectId)!;
-    const isNeedingSupport = stu.averageScore < 74;
+    const stuProfile = STUDENT_PROFILES.find((p) => p.name === stu.displayName);
+    const worstSubIdx = stuProfile
+      ? stuProfile.scoresBySub.indexOf(Math.min(...stuProfile.scoresBySub))
+      : 0;
+    const sub = subjects[worstSubIdx] || subjects[0];
+    const comp =
+      competencies.find((c) => c.subjectId === sub.id && c.gradeLevel === stu.gradeLevel) ||
+      competencies.find((c) => c.subjectId === sub.id)!;
+
     const evtId = `evt_demo_${idx + 1}`;
     const actId = `act_demo_${idx + 1}`;
     const intId = `int_demo_${idx + 1}`;
@@ -347,46 +431,44 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       classId: stu.classId,
       subjectId: sub.id,
       competencyId: comp.id,
-      title: isNeedingSupport
-        ? `Reforço Guiado: ${comp.name} (DEMO)`
-        : `Consolidação de Domínio: ${comp.name} (DEMO)`,
-      type: isNeedingSupport ? 'Practice Exercises' : 'Revision Quiz',
-      difficulty: isNeedingSupport ? 'Foundational' : 'Intermediate',
+      title: `Recuperação da Prova: ${comp.name}`,
+      type: 'Practice Exercises',
+      difficulty: 'Foundational',
       origin: 'AI_AUTONOMOUS',
-      status: idx % 3 === 0 ? 'COMPLETED' : 'ASSIGNED',
-      scorePercentage: idx % 3 === 0 ? Math.min(94, stu.averageScore + 11) : undefined,
+      status: idx % 4 === 0 ? 'COMPLETED' : 'ASSIGNED',
+      scorePercentage: idx % 4 === 0 ? Math.min(82, stu.averageScore + 16) : undefined,
       feedbackSummary:
-        idx % 3 === 0
-          ? `Concluída com evolução de +11 pts em ${comp.code}. O motor autônomo avançou o próximo módulo.`
-          : undefined,
+        idx % 4 === 0
+          ? `Concluída com recuperação de +16 pts em ${comp.code}.`
+          : `Atividade criada automaticamente pela IA após baixa nota em ${sub.name}.`,
       questions: [
         {
           id: `dq_${idx}_1`,
-          prompt: `Em ${sub.name} (${comp.name}), qual estratégia evita erros de procedimento?`,
+          prompt: `Em ${sub.name} (${comp.name}), qual procedimento evita os erros mais comuns em provas do Ensino Médio e ENEM?`,
           questionType: 'multiple_choice',
           options: [
-            'Aplicar as operações passo a passo e conferir valores intermediários',
-            'Pular a verificação das condições iniciais antes de substituir',
-            'Estimar o resultado sem registrar etapas intermediárias',
-            'Aplicar a operação inversa apenas em um dos lados',
+            'Organizar os dados iniciais, aplicar o conceito passo a passo e validar o resultado final',
+            'Pular a leitura detalhada do enunciado para ganhar tempo',
+            'Desconsiderar unidades de medida ou condições de contorno',
+            'Assumir a resposta sem testar a coerência com a pergunta',
           ],
-          correctAnswer: 'Aplicar as operações passo a passo e conferir valores intermediários',
-          explanation: `Manter o equilíbrio das etapas e conferir os passos reduz falhas recorrentes em ${comp.code}.`,
+          correctAnswer: 'Organizar os dados iniciais, aplicar o conceito passo a passo e validar o resultado final',
+          explanation: `A leitura atenta e a conferência das etapas reduzem erros recorrentes em ${comp.code}.`,
         },
         {
           id: `dq_${idx}_2`,
-          prompt: `Verdadeiro ou Falso: Conferir o resultado final no enunciado original confirma a precisão em ${comp.code}.`,
+          prompt: `Verdadeiro ou Falso: Revisar os erros da prova anterior antes de refazer exercícios melhora o desempenho em ${comp.code}.`,
           questionType: 'true_false',
           options: ['Verdadeiro', 'Falso'],
           correctAnswer: 'Verdadeiro',
-          explanation: 'A substituição de prova real identifica rapidamente trocas de sinal ou razão.',
+          explanation: 'Consolidar o conceito-chave corrige falhas de base rapidamente.',
         },
         {
           id: `dq_${idx}_3`,
-          prompt: `Explique em 1 ou 2 frases como você verifica sua solução em ${comp.name}.`,
+          prompt: `Explique com suas palavras qual foi o principal ponto de atenção em ${comp.name}.`,
           questionType: 'short_answer',
-          correctAnswer: 'Substituir o resultado encontrado na expressão original para verificar a igualdade ou coerência.',
-          explanation: 'A conferência por substituição valida o raciocínio conceitual.',
+          correctAnswer: `Identificar corretamente os dados e aplicar as propriedades de ${comp.name} conferindo o resultado.`,
+          explanation: 'Justificar o próprio raciocínio ajuda a fixar o conteúdo.',
         },
       ],
       createdAt: ts,
@@ -401,49 +483,47 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       studentId: stu.id,
       subjectId: sub.id,
       competencyId: comp.id,
-      title: `Trilha Adaptativa: ${comp.name} (DEMO)`,
-      educationalObjective: `Construir domínio sólido em ${comp.name} por meio de microaulas sequenciais e prática guiada.`,
-      estimatedLevel: stu.averageScore >= 85 ? 'Mastering' : stu.averageScore >= 72 ? 'Proficient' : 'Developing',
-      masteryCriterion: 'Atingir >= 80% em duas verificações formativas consecutivas',
+      title: `Trilha de Recuperação: ${sub.name} — ${comp.name}`,
+      educationalObjective: `Elevar o rendimento em ${sub.name} (${stu.gradeLevel}) para acima de 6,0 (60%) com revisão guiada.`,
+      estimatedLevel: 'Developing',
+      masteryCriterion: 'Atingir >= 70% nas atividades de recuperação',
       nextReviewDate: '2026-12-03',
-      progressPercent: idx % 3 === 0 ? 75 : isNeedingSupport ? 40 : 60,
+      progressPercent: idx % 4 === 0 ? 75 : 35,
       updatedAt: ts,
       modules: [
-        { order: 1, title: 'Fundamentos e Conceitos-Chave', shortLesson: `Regras essenciais de ${comp.name}.`, exerciseFocus: '3 verificações iniciais', status: 'COMPLETED', masteryScore: 88 },
-        { order: 2, title: 'Operações Inversas e Estruturais', shortLesson: 'Transformações passo a passo sem atalhos.', exerciseFocus: '3 exercícios guiados', status: idx % 3 === 0 ? 'COMPLETED' : 'IN_PROGRESS', masteryScore: idx % 3 === 0 ? 84 : undefined },
-        { order: 3, title: 'Aplicação em Múltiplas Etapas', shortLesson: 'Resolução de problemas contextualizados.', exerciseFocus: '2 tarefas intermediárias', status: idx % 3 === 0 ? 'IN_PROGRESS' : 'UPCOMING' },
-        { order: 4, title: 'Consolidação e Verificação de Domínio', shortLesson: 'Revisão sintética para consolidação.', exerciseFocus: 'Quiz curto de revisão', status: 'UPCOMING' },
+        { order: 1, title: 'Revisão da Prova Anterior', shortLesson: `Correção comentada dos erros em ${comp.name}.`, exerciseFocus: '3 questões diagnósticas', status: 'COMPLETED', masteryScore: 80 },
+        { order: 2, title: 'Base Conceitual Guiada', shortLesson: `Passo a passo para dominar ${sub.name}.`, exerciseFocus: '3 exercícios resolvidos', status: idx % 4 === 0 ? 'COMPLETED' : 'IN_PROGRESS', masteryScore: idx % 4 === 0 ? 78 : undefined },
+        { order: 3, title: 'Simulado de Recuperação (ENEM)', shortLesson: 'Questões práticas focadas nos pontos críticos.', exerciseFocus: '3 questões comentadas', status: idx % 4 === 0 ? 'IN_PROGRESS' : 'UPCOMING' },
+        { order: 4, title: 'Validação de Média', shortLesson: 'Reavaliação final da competência.', exerciseFocus: 'Quiz rápido de fechamento', status: 'UPCOMING' },
       ],
     });
 
-    if (isNeedingSupport || idx < 6) {
-      interventions.push({
-        id: intId,
-        institutionId: DEMO_INSTITUTION_ID,
-        staffUids: [DEMO_STAFF_UID],
-        studentOwnerUid: stu.studentOwnerUid,
-        studentId: stu.id,
-        subjectId: sub.id,
-        competencyId: comp.id,
-        sourceEventId: evtId,
-        evidence: `Média recente de ${stu.averageScore}% em 3 observações de ${comp.code} indicou oportunidade de reforço.`,
-        strategy: 'Microaula de Revisão + 3 Exercícios Guiados + Quiz de Consolidação',
-        priority: stu.averageScore < 62 ? 'HIGH' : 'MEDIUM',
-        status: idx % 3 === 0 ? 'COMPLETED' : idx % 2 === 0 ? 'IN_PROGRESS' : 'ASSIGNED',
-        contentSummary: `Sequência autônoma de reforço focada nos pré-requisitos de ${comp.name} e conferência de etapas.`,
-        activityIds: [actId],
-        outcomeSummary: idx % 3 === 0 ? 'Estudante evoluiu +11 pts na prática seguinte; avançou para o Módulo 3.' : undefined,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
+    interventions.push({
+      id: intId,
+      institutionId: DEMO_INSTITUTION_ID,
+      staffUids: [DEMO_STAFF_UID],
+      studentOwnerUid: stu.studentOwnerUid,
+      studentId: stu.id,
+      subjectId: sub.id,
+      competencyId: comp.id,
+      sourceEventId: evtId,
+      evidence: `Média crítica em ${sub.name} com risco de reprovação identificado pela IA.`,
+      strategy: 'Revisão Automática de Prova + Lista de Recuperação',
+      priority: stu.averageScore < 60 ? 'HIGH' : 'MEDIUM',
+      status: idx % 4 === 0 ? 'COMPLETED' : 'ASSIGNED',
+      contentSummary: `Plano de recuperação criado pela IA para ${stu.displayName} em ${sub.name} (${comp.name}).`,
+      activityIds: [actId],
+      outcomeSummary: idx % 4 === 0 ? 'Recuperação concluída com avanço de +16 pts.' : undefined,
+      createdAt: ts,
+      updatedAt: ts,
+    });
 
     learningEvents.push({
       id: evtId,
       institutionId: DEMO_INSTITUTION_ID,
       staffUids: [DEMO_STAFF_UID],
       studentOwnerUid: stu.studentOwnerUid,
-      eventType: idx % 2 === 0 ? 'AssessmentSubmitted' : 'ActivityCompleted',
+      eventType: 'AssessmentSubmitted',
       studentId: stu.id,
       subjectId: sub.id,
       competencyId: comp.id,
@@ -464,21 +544,19 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       pseudonymId: stu.pseudonymId,
       subjectId: sub.id,
       competencyId: comp.id,
-      evidence: `3 observações longitudinais em ${comp.code} com média de ${stu.averageScore}% (${stu.completionRate}% de conclusão).`,
-      pedagogicalDiagnosis: isNeedingSupport
-        ? `Lacuna detectada na consistência procedimental em ${comp.name}; reforço básico atribuído.`
-        : `Progresso consistente observado em ${comp.name}; consolidação adaptativa agendada.`,
-      priority: stu.averageScore < 62 ? 'HIGH' : stu.averageScore < 74 ? 'MEDIUM' : 'LOW',
-      strategyChosen: isNeedingSupport ? 'Microaula Guiada e Prática Estruturada' : 'Revisão Espaçada de Consolidação',
-      learningObjective: `Atingir >=80% de precisão em exercícios de ${comp.name}.`,
-      confidence: 0.84,
+      evidence: `Nota crítica em ${sub.name} (${comp.name}) na ${stu.gradeLevel}.`,
+      pedagogicalDiagnosis: `Risco de reprovação detectado automaticamente em ${sub.name}; revisão de prova e lista de recuperação aplicadas.`,
+      priority: stu.averageScore < 60 ? 'HIGH' : 'MEDIUM',
+      strategyChosen: `Revisão Automática de Prova (${sub.name})`,
+      learningObjective: `Recuperar média em ${sub.name} para >= 60%.`,
+      confidence: 0.89,
       engineSource: 'DEMO_RULES',
       observedOutcome:
-        idx % 3 === 0
-          ? 'Reforço concluído (+11 pts); trilha de aprendizagem atualizada.'
-          : 'Atividade personalizada atribuída; aguardando realização pelo estudante.',
+        idx % 4 === 0
+          ? 'Lista de recuperação concluída pelo estudante.'
+          : 'Revisão de prova e lista de recuperação geradas sem ação manual.',
       generatedActivityId: actId,
-      interventionId: isNeedingSupport || idx < 6 ? intId : undefined,
+      interventionId: intId,
       createdAt: ts,
     });
 
@@ -488,10 +566,10 @@ export function createDeterministicDemoDataset(): WorkspaceDataset {
       staffUids: [DEMO_STAFF_UID],
       actorUid: 'autonomous_learning_engine',
       actorType: 'AI_ENGINE',
-      action: isNeedingSupport ? 'INTERVENCAO_E_ATIVIDADE_ATRIBUIDAS' : 'TRILHA_ADAPTADA',
+      action: 'REVISAO_PROVA_AUTONOMA',
       targetCollection: 'interventions',
       targetId: intId,
-      summary: `Evento ${evtId} de ${stu.pseudonymId} (${comp.code}) processado via DEMO_RULES; zero PII transmitida.`,
+      summary: `Revisão de prova e alerta de risco gerados para ${stu.pseudonymId} em ${sub.code}.`,
       createdAt: ts,
     });
   });

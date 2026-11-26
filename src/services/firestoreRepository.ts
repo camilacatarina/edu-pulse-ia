@@ -108,11 +108,11 @@ export async function createInstitutionWorkspace(params: {
       updatedAt: now,
     });
 
-    // Disciplinas iniciais para uso imediato no Modo LIVE
-    const defaultSubjects: Array<{ name: string; code: string; compName: string; compCode: string }> = [
-      { name: 'Matemática', code: 'MAT', compName: 'Equações de Primeiro Grau e Operações Inversas', compCode: 'MAT-EQ1' },
-      { name: 'Ciências Físicas', code: 'FIS', compName: 'Movimento Uniforme e Cinemática', compCode: 'FIS-CIN1' },
-      { name: 'Língua Portuguesa', code: 'PORT', compName: 'Argumentação Baseada em Evidências', compCode: 'PORT-ARG1' },
+    // Disciplinas iniciais do Ensino Médio para uso imediato no Modo LIVE
+    const defaultSubjects: Array<{ name: string; code: string; compName: string; compCode: string; gradeLevel: string }> = [
+      { name: 'Matemática', code: 'MAT', compName: 'Funções Afins e Quadráticas', compCode: 'MAT-FUN', gradeLevel: '1ª Série EM' },
+      { name: 'Física', code: 'FIS', compName: 'Cinemática e Leis de Newton', compCode: 'FIS-CIN', gradeLevel: '1ª Série EM' },
+      { name: 'Português e Redação', code: 'PORT', compName: 'Redação Dissertativo-Argumentativa (ENEM)', compCode: 'PORT-ARG', gradeLevel: '3ª Série EM' },
     ];
 
     const batch = writeBatch(db);
@@ -134,8 +134,8 @@ export async function createInstitutionWorkspace(params: {
         subjectId: subId,
         code: s.compCode,
         name: s.compName,
-        description: `Competência fundamental em ${s.name}.`,
-        gradeLevel: '8º Ano',
+        description: `Competência do Ensino Médio em ${s.name}.`,
+        gradeLevel: s.gradeLevel,
         createdAt: now,
       });
     });
@@ -463,6 +463,29 @@ export async function updateAssessmentReviewInFirestore(
   try {
     await updateDoc(doc(db, 'assessmentResults', resultId), {
       teacherReviewed,
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `assessmentResults/${resultId}`);
+  }
+}
+
+export async function createAssessmentResultInFirestore(
+  result: AssessmentResult
+): Promise<void> {
+  try {
+    await setDoc(doc(db, 'assessmentResults', result.id), result);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `assessmentResults/${result.id}`);
+  }
+}
+
+export async function updateAssessmentResultAiReviewInFirestore(
+  resultId: string,
+  aiPreliminaryFeedback: string
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'assessmentResults', resultId), {
+      aiPreliminaryFeedback: aiPreliminaryFeedback.slice(0, 1950),
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `assessmentResults/${resultId}`);

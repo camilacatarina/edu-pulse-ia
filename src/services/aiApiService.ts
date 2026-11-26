@@ -54,6 +54,98 @@ export async function triggerAutonomousEngine(payload: {
   return data;
 }
 
+export interface AutoStepCandidatePayload {
+  pseudonymId: string;
+  gradeLevel: string;
+  subjectName: string;
+  competencyCode: string;
+  competencyName: string;
+  recentScores: number[];
+  latestScore: number;
+  completedActivitiesCount: number;
+  hasPendingActivity: boolean;
+  hasOpenIntervention: boolean;
+}
+
+export async function triggerAutonomousAutoStep(payload: {
+  institutionId: string;
+  candidates: AutoStepCandidatePayload[];
+  demoMode: boolean;
+}): Promise<{
+  ok: boolean;
+  selectedCandidate: AutoStepCandidatePayload;
+  selectionReason: string;
+  eventId: string;
+  idempotencyKey: string;
+  analysis: StructuredAutonomousAnalysis;
+  idempotentHit: boolean;
+  geminiConfigured: boolean;
+  processedAt: string;
+}> {
+  const res = await fetch('/api/autonomous-engine/auto-step', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || 'O motor autônomo não conseguiu executar a etapa.');
+  }
+  return data;
+}
+
+export interface AutoExamCandidatePayload {
+  resultId: string;
+  pseudonymId: string;
+  gradeLevel: string;
+  subjectName: string;
+  competencyCode: string;
+  competencyName: string;
+  score: number;
+  maxScore: number;
+  percentage: number;
+  studentOverallAvg: number;
+  bestSubjectName?: string;
+  worstSubjectName?: string;
+  recentScores: number[];
+  alreadyReviewed: boolean;
+}
+
+export async function triggerAutonomousExamReview(payload: {
+  institutionId: string;
+  exams: AutoExamCandidatePayload[];
+  demoMode: boolean;
+}): Promise<{
+  ok: boolean;
+  selectedExam: AutoExamCandidatePayload;
+  selectionReason: string;
+  examReview: {
+    verdict: string;
+    whatWentWell: string;
+    whereStruggled: string;
+    recommendation: string;
+    failureRiskAlert: 'PRIORIDADE_MAXIMA' | 'ATENCAO' | 'REGULAR';
+    reviewText: string;
+    engineSource: 'GEMINI' | 'DEMO_RULES' | 'RULE_ENGINE_FALLBACK';
+  };
+  eventId: string;
+  idempotencyKey: string;
+  analysis: StructuredAutonomousAnalysis;
+  geminiConfigured: boolean;
+  processedAt: string;
+}> {
+  const res = await fetch('/api/autonomous-engine/auto-review-exam', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || 'A IA não conseguiu revisar a prova automaticamente.');
+  }
+  return data;
+}
+
 export async function runInternalLearningCycleBatch(events: Array<{
   eventId: string;
   idempotencyKey: string;

@@ -1,20 +1,33 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Area,
-  AreaChart,
+  AlertTriangle,
+  ArrowUpRight,
+  BookOpenCheck,
+  Bot,
+  Download,
+  Pause,
+  Play,
+  Plus,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
+import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Legend,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowUpRight, Play, Sparkles } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
-import { labelEngineSource, labelPedagogicalStatus, labelPriority } from '../../utils/labels';
+import {
+  formatGradeTen,
+  labelRiskShort,
+  parseStructuredExamReview,
+} from '../../utils/pedagogicalAnalytics';
 
 interface OverviewModuleProps {
   onNavigate: (tab: string) => void;
@@ -28,546 +41,705 @@ export const OverviewModule: React.FC<OverviewModuleProps> = ({
   const {
     dataset,
     mode,
+    teacherFilter,
+    setTeacherFilter,
+    availableTeachers,
+    scopedStudentProfiles,
     engineProcessing,
-    runAutonomousLearningDemo,
-    geminiConfigured,
+    autoPilotEnabled,
+    setAutoPilotEnabled,
+    nextScanSeconds,
+    autoActionsCount,
+    lastAutoDecision,
+    runAutonomousAutoScan,
+    recordExamGrade,
   } = useWorkspace();
 
+  const [riskTab, setRiskTab] = useState<'MAXIMUM' | 'MODERATE' | 'ALL'>('MAXIMUM');
+  const [showGradeModal, setShowGradeModal] = useState(false);
+  const [gradeStudentId, setGradeStudentId] = useState('');
+  const [gradeSubjectId, setGradeSubjectId] = useState('');
+  const [gradeCompetencyId, setGradeCompetencyId] = useState('');
+  const [gradeScoreTen, setGradeScoreTen] = useState('5.5');
+  const [savingGrade, setSavingGrade] = useState(false);
+
+  const scopedStudentIds = useMemo(
+    () => new Set(scopedStudentProfiles.map((p) => p.student.id)),
+    [scopedStudentProfiles]
+  );
+
+  const scopedResults = useMemo(
+    () => dataset.assessmentResults.filter((r) => scopedStudentIds.has(r.studentId)),
+    [dataset.assessmentResults, scopedStudentIds]
+  );
+
   const metrics = useMemo(() => {
-    const totalStudents = dataset.students.length;
-    const totalClasses = dataset.classes.length;
-    const avgPerformance =
-      totalStudents > 0
+    const total = scopedStudentProfiles.length;
+    const maxRiskCount = scopedStudentProfiles.filter((p) => p.riskLevel === 'MAXIMUM').length;
+    const moderateRiskCount = scopedStudentProfiles.filter((p) => p.riskLevel === 'MODERATE').length;
+    const avgOverall =
+      total > 0
         ? Math.round(
-            (dataset.students.reduce((acc, s) => acc + s.averageScore, 0) / totalStudents) * 10
+            (scopedStudentProfiles.reduce((acc, p) => acc + p.overallAverage, 0) / total) * 10
           ) / 10
         : 0;
-    const completionRate =
-      totalStudents > 0
-        ? Math.round(
-            (dataset.students.reduce((acc, s) => acc + s.completionRate, 0) / totalStudents) * 10
-          ) / 10
-        : 0;
-    const studentsNeedingSupport = dataset.students.filter(
-      (s) =>
-        s.pedagogicalStatus === 'Needs Reinforcement' ||
-        s.pedagogicalStatus === 'Additional Practice Recommended'
-    ).length;
-    const aiInterventionsCount = dataset.interventions.length;
-    const pendingActivitiesCount = dataset.activities.filter(
-      (a) => a.status !== 'COMPLETED'
+
+    const totalExams = scopedResults.length;
+    const aiReviewedExams = scopedResults.filter(
+      (r) => Boolean(r.aiPreliminaryFeedback && r.aiPreliminaryFeedback.includes('Ponto Forte:'))
     ).length;
 
-    return {
-      totalStudents,
-      totalClasses,
-      avgPerformance,
-      completionRate,
-      studentsNeedingSupport,
-      aiInterventionsCount,
-      pendingActivitiesCount,
-    };
-  }, [dataset]);
-
-  // Chart 1: Desempenho Acadêmico ao Longo do Tempo
-  const performanceOverTime = useMemo(() => {
-    const weeks = [
-      { label: 'Semana 1 (04 Nov)', filterDate: '2026-11-08' },
-      { label: 'Semana 2 (11 Nov)', filterDate: '2026-11-15' },
-      { label: 'Semana 3 (18 Nov)', filterDate: '2026-11-22' },
-      { label: 'Ciclo Atual', filterDate: '2099-01-01' },
-    ];
-
-    if (dataset.assessmentResults.length === 0) {
-      return [
-        { period: 'Semana 1', averageScore: 0, completion: 0 },
-        { period: 'Atual', averageScore: metrics.avgPerformance, completion: metrics.completionRate },
-      ];
-    }
-
-    const sorted = [...dataset.assessmentResults].sort((a, b) =>
-      a.submittedAt.localeCompare(b.submittedAt)
-    );
-
-    const buckets: Record<string, number[]> = {
-      'Semana 1': [],
-      'Semana 2': [],
-      'Semana 3': [],
-      Atual: [],
-    };
-
-    sorted.forEach((r) => {
-      const d = r.submittedAt.slice(0, 10);
-      if (d <= weeks[0].filterDate) buckets['Semana 1'].push(r.percentage);
-      else if (d <= weeks[1].filterDate) buckets['Semana 2'].push(r.percentage);
-      else if (d <= weeks[2].filterDate) buckets['Semana 3'].push(r.percentage);
-      else buckets['Atual'].push(r.percentage);
-    });
-
-    return Object.entries(buckets).map(([period, vals], idx) => {
+    const subjectAverages = dataset.subjects.map((sub) => {
+      const vals = scopedStudentProfiles
+        .map((p) => p.subjectPerformances.find((sp) => sp.subject.id === sub.id)?.average)
+        .filter((v): v is number => typeof v === 'number');
       const avg =
         vals.length > 0
           ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10
-          : metrics.avgPerformance;
-      return {
-        period,
-        averageScore: avg,
-        completion: Math.min(100, Math.round(metrics.completionRate - (3 - idx) * 3)),
-      };
-    });
-  }, [dataset.assessmentResults, metrics]);
-
-  // Chart 2: Learning Progress by Subject
-  const progressBySubject = useMemo(() => {
-    return dataset.subjects.map((sub) => {
-      const results = dataset.assessmentResults.filter((r) => r.subjectId === sub.id);
-      const avg =
-        results.length > 0
-          ? Math.round((results.reduce((a, b) => a + b.percentage, 0) / results.length) * 10) / 10
-          : metrics.avgPerformance;
-      const completedActs = dataset.activities.filter(
-        (a) => a.subjectId === sub.id && a.status === 'COMPLETED'
-      ).length;
-      return {
-        subject: sub.code,
-        fullName: sub.name,
-        avgScore: avg,
-        completedActivities: completedActs,
-      };
-    });
-  }, [dataset, metrics.avgPerformance]);
-
-  // Chart 3: Class Performance Comparison
-  const classComparison = useMemo(() => {
-    return dataset.classes.map((cls) => {
-      const clsStudents = dataset.students.filter((s) => s.classId === cls.id);
-      const avg =
-        clsStudents.length > 0
-          ? Math.round(
-              (clsStudents.reduce((a, b) => a + b.averageScore, 0) / clsStudents.length) * 10
-            ) / 10
           : 0;
-      const comp =
-        clsStudents.length > 0
-          ? Math.round(
-              (clsStudents.reduce((a, b) => a + b.completionRate, 0) / clsStudents.length) * 10
-            ) / 10
-          : 0;
-      return {
-        name: cls.name.split('—')[0].trim(),
-        fullName: cls.name,
-        averageScore: avg,
-        completionRate: comp,
-        studentCount: clsStudents.length,
-      };
+      return { subject: sub, avg };
     });
-  }, [dataset]);
 
-  // Chart 4: Competency Mastery (lowest-to-highest so reinforcement priorities stand out)
-  const competencyMastery = useMemo(() => {
-    return dataset.competencies
-      .map((comp) => {
-        const res = dataset.assessmentResults.filter((r) => r.competencyId === comp.id);
-        const mastery =
-          res.length > 0
-            ? Math.round((res.reduce((a, b) => a + b.percentage, 0) / res.length) * 10) / 10
-            : 75;
-        return {
-          code: comp.code,
-          name: comp.name,
-          mastery,
-        };
-      })
-      .sort((a, b) => a.mastery - b.mastery)
-      .slice(0, 6);
-  }, [dataset]);
+    const criticalSubject = [...subjectAverages].sort((a, b) => a.avg - b.avg)[0] || null;
 
-  // Chart 5: Visão Geral das Intervenções da IA
-  const interventionsOverview = useMemo(() => {
-    const statuses: Array<{ status: string; label: string; count: number; color: string }> = [
-      { status: 'CREATED', label: 'Criada', count: 0, color: '#64748b' },
-      { status: 'ASSIGNED', label: 'Atribuída', count: 0, color: '#0284c7' },
-      { status: 'IN_PROGRESS', label: 'Em Andamento', count: 0, color: '#d97706' },
-      { status: 'COMPLETED', label: 'Concluída', count: 0, color: '#16a34a' },
-      { status: 'REASSESSMENT_REQUIRED', label: 'Reavaliação', count: 0, color: '#dc2626' },
+    return {
+      total,
+      maxRiskCount,
+      moderateRiskCount,
+      avgOverall,
+      totalExams,
+      aiReviewedExams,
+      pendingExams: Math.max(0, totalExams - aiReviewedExams),
+      subjectAverages,
+      criticalSubject,
+    };
+  }, [scopedStudentProfiles, scopedResults, dataset.subjects]);
+
+  const priorityList = useMemo(() => {
+    if (riskTab === 'MAXIMUM') {
+      return scopedStudentProfiles.filter((p) => p.riskLevel === 'MAXIMUM');
+    }
+    if (riskTab === 'MODERATE') {
+      return scopedStudentProfiles.filter((p) => p.riskLevel === 'MODERATE');
+    }
+    return scopedStudentProfiles;
+  }, [scopedStudentProfiles, riskTab]);
+
+  const recentReviewedExams = useMemo(() => {
+    return [...scopedResults]
+      .filter((r) => Boolean(r.aiPreliminaryFeedback && r.aiPreliminaryFeedback.trim().length > 0))
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+      .slice(0, 5);
+  }, [scopedResults]);
+
+  const subjectChartData = useMemo(() => {
+    return metrics.subjectAverages.map((item) => ({
+      name: item.subject.code,
+      fullName: item.subject.name,
+      media: item.avg,
+    }));
+  }, [metrics.subjectAverages]);
+
+  const openNewGradeModal = () => {
+    const firstStu = scopedStudentProfiles[0]?.student || dataset.students[0];
+    const firstSub = dataset.subjects[0];
+    const firstComp =
+      dataset.competencies.find((c) => c.subjectId === firstSub?.id) || dataset.competencies[0];
+    setGradeStudentId(firstStu?.id || '');
+    setGradeSubjectId(firstSub?.id || '');
+    setGradeCompetencyId(firstComp?.id || '');
+    setGradeScoreTen('5.2');
+    setShowGradeModal(true);
+  };
+
+  const handleSaveExamGrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!gradeStudentId || !gradeSubjectId || !gradeCompetencyId) return;
+    const numericTen = Number(gradeScoreTen.replace(',', '.'));
+    if (Number.isNaN(numericTen)) return;
+    const pct = Math.min(100, Math.max(0, Math.round(numericTen * 10)));
+    setSavingGrade(true);
+    try {
+      await recordExamGrade({
+        studentId: gradeStudentId,
+        subjectId: gradeSubjectId,
+        competencyId: gradeCompetencyId,
+        percentage: pct,
+      });
+      setShowGradeModal(false);
+    } finally {
+      setSavingGrade(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    const headers = [
+      'Estudante',
+      'Serie',
+      'Media_0_10',
+      'Risco_Reprovacao',
+      'Melhor_Materia',
+      'Pior_Materia',
+      'Motivo_Risco',
     ];
-    dataset.interventions.forEach((intv) => {
-      const target = statuses.find((s) => s.status === intv.status);
-      if (target) target.count += 1;
-    });
-    return statuses;
-  }, [dataset.interventions]);
-
-  const topStrugglingCompetencies = competencyMastery.slice(0, 3);
-  const supportStudentsList = useMemo(
-    () =>
-      dataset.students
-        .filter(
-          (s) =>
-            s.pedagogicalStatus === 'Needs Reinforcement' ||
-            s.pedagogicalStatus === 'Additional Practice Recommended'
-        )
-        .sort((a, b) => a.averageScore - b.averageScore)
-        .slice(0, 5),
-    [dataset.students]
-  );
-
-  const recentAiFeed = useMemo(() => {
-    return [...dataset.aiInsights]
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 6);
-  }, [dataset.aiInsights]);
+    const rows = scopedStudentProfiles.map((p) => [
+      `"${p.student.displayName.replace(/"/g, '""')}"`,
+      p.student.gradeLevel,
+      formatGradeTen(p.overallAverage),
+      labelRiskShort(p.riskLevel),
+      p.bestSubject ? `${p.bestSubject.subject.name} (${formatGradeTen(p.bestSubject.average)})` : '-',
+      p.worstSubject ? `${p.worstSubject.subject.name} (${formatGradeTen(p.worstSubject.average)})` : '-',
+      `"${p.riskReason.replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `painel-professor-em-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <div className="space-y-8">
-      {/* Cabeçalho Executivo e Gatilho do Ciclo Autônomo */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-6 border-b border-slate-200">
+    <div className="space-y-6">
+      {/* Cabeçalho e Seletor do Professor */}
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 pb-5 border-b border-slate-200">
         <div>
           <p className="text-xs font-medium text-slate-500">
-            {mode === 'DEMO' ? 'DADOS DEMO · Simulação Institucional Sintética' : 'DADOS AO VIVO DA INSTITUIÇÃO · Cloud Firestore'}
-            {' · '}
-            {dataset.institution.name}
+            {dataset.institution.name} · {mode === 'DEMO' ? 'Ambiente Demo' : 'Dados em Tempo Real'}
           </p>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-            Visão Geral Executiva de Aprendizagem
+            Painel do Professor · Risco de Reprovação e Revisões da IA
           </h1>
-          <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-            Monitoramento acadêmico contínuo, detecção proativa de lacunas de competência e intervenções pedagógicas autônomas em todas as turmas.
+          <p className="text-sm text-slate-600 mt-1">
+            Acompanhe médias, identifique prioridades máximas de reprovação e veja onde cada aluno vai melhor ou pior.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {availableTeachers.length > 0 && (
+            <select
+              aria-label="Filtrar por professor"
+              value={teacherFilter}
+              onChange={(e) => setTeacherFilter(e.target.value)}
+              className="px-3 py-2 text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded-lg"
+            >
+              <option value="ALL">Todos os Professores ({dataset.students.length} alunos)</option>
+              {availableTeachers.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+
           <button
             type="button"
-            onClick={() => onNavigate('intelligence')}
-            className="px-4 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0"
+            onClick={openNewGradeModal}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 whitespace-nowrap shrink-0"
           >
-            Inspecionar Central de IA
+            <Plus className="w-3.5 h-3.5" />
+            Lançar Nota de Prova
           </button>
+
           <button
             type="button"
-            disabled={engineProcessing}
-            onClick={() => runAutonomousLearningDemo()}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            onClick={() => setAutoPilotEnabled(!autoPilotEnabled)}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border whitespace-nowrap shrink-0 transition-colors ${
+              autoPilotEnabled
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+            }`}
           >
-            <Play className="w-3.5 h-3.5" />
-            {engineProcessing ? 'Processando Ciclo...' : 'EXECUTAR CICLO AUTÔNOMO DEMO'}
+            {autoPilotEnabled ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            {autoPilotEnabled ? 'IA Autônoma Ativa' : 'Retomar IA'}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 whitespace-nowrap shrink-0"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Exportar
           </button>
         </div>
       </div>
 
-      {/* Grade de KPIs Principais */}
-      <section aria-label="Principais métricas acadêmicas" className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Motor Autônomo de IA (Sem Manutenção Humana) */}
+      <section className="bg-slate-950 text-slate-100 rounded-xl p-6 border border-slate-800">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-800">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
+              <Bot className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-semibold text-emerald-400">
+                  {engineProcessing
+                    ? 'REVISANDO PROVA E CALCULANDO RISCOS'
+                    : autoPilotEnabled
+                      ? 'IA OPERANDO SOZINHA · SEM MANUTENÇÃO HUMANA'
+                      : 'IA AUTÔNOMA PAUSADA'}
+                </span>
+                <span className="text-slate-500">·</span>
+                <span className="font-mono tabular-nums text-slate-300">
+                  {autoPilotEnabled
+                    ? engineProcessing
+                      ? 'Processando revisão automática...'
+                      : `Próxima verificação automática em ${nextScanSeconds}s`
+                    : 'Pausada pelo professor'}
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-white mt-1">
+                {lastAutoDecision
+                  ? `${lastAutoDecision.modeType === 'EXAM_REVIEW' ? 'Última revisão de prova' : 'Última ação da IA'}: ${lastAutoDecision.studentName} (${lastAutoDecision.subjectName})`
+                  : 'Analisando provas pendentes e risco de reprovação automaticamente...'}
+              </h2>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={engineProcessing}
+            onClick={() => runAutonomousAutoScan(false)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-950 bg-white rounded-lg hover:bg-slate-100 disabled:opacity-60 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            {engineProcessing ? 'Processando...' : 'Revisar Próxima Prova Agora'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4 text-xs">
+          <div>
+            <p className="text-slate-400">Diagnóstico Automático</p>
+            <p className="text-slate-100 font-medium mt-1 leading-relaxed">
+              {lastAutoDecision
+                ? lastAutoDecision.reviewVerdict || lastAutoDecision.reason
+                : 'Priorizando provas com notas abaixo de 6,0 para revisão imediata.'}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400">Ponto Forte × Pior Matéria</p>
+            <p className="text-slate-200 font-medium mt-1 leading-relaxed">
+              {lastAutoDecision?.bestSubject || lastAutoDecision?.worstSubject
+                ? `Melhor: ${lastAutoDecision.bestSubject || '-'} · Pior: ${lastAutoDecision.worstSubject || '-'}`
+                : 'Mapeando afinidade por matéria de cada aluno.'}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400">Lista de Recuperação Gerada</p>
+            <p className="text-sky-300 font-medium mt-1 leading-relaxed">
+              {lastAutoDecision
+                ? lastAutoDecision.activityTitle
+                : 'Aguardando seleção automática...'}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400">Ações Autônomas na Sessão</p>
+            <p className="text-white text-base font-bold font-mono tabular-nums mt-1">
+              {autoActionsCount} {autoActionsCount === 1 ? 'revisão/ação' : 'revisões/ações'}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 4 KPIs Essenciais para o Professor */}
+      <section aria-label="Indicadores do professor" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs font-medium text-slate-500">Total de Estudantes</p>
-          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-2">{metrics.totalStudents}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-slate-500">Prioridade Máxima de Reprovação</p>
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+          </div>
+          <p className="text-2xl font-bold text-red-700 font-mono tabular-nums mt-1.5">
+            {metrics.maxRiskCount}
+          </p>
           <p className="text-xs text-slate-500 mt-1">
-            Em <span className="tabular-nums font-medium text-slate-700">{metrics.totalClasses}</span> turmas ativas
+            +{metrics.moderateRiskCount} em atenção preventiva
           </p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs font-medium text-slate-500">Desempenho Médio</p>
-          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-2">{metrics.avgPerformance}%</p>
-          <p className="text-xs text-emerald-700 font-medium mt-1">
-            Conclusão de atividades {metrics.completionRate}%
+          <p className="text-xs font-medium text-slate-500">Média Geral da Turma</p>
+          <p className="text-2xl font-bold text-slate-900 font-mono tabular-nums mt-1.5">
+            {formatGradeTen(metrics.avgOverall)} <span className="text-sm font-normal text-slate-400">/ 10</span>
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            {metrics.avgOverall}% em {metrics.total} alunos
           </p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs font-medium text-slate-500">Estudantes com Necessidade de Apoio</p>
-          <p className="text-2xl font-bold text-amber-700 tabular-nums mt-2">
-            {metrics.studentsNeedingSupport}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-slate-500">Provas Revisadas pela IA</p>
+            <BookOpenCheck className="w-4 h-4 text-sky-700 shrink-0" />
+          </div>
+          <p className="text-2xl font-bold text-sky-700 font-mono tabular-nums mt-1.5">
+            {metrics.aiReviewedExams} <span className="text-sm font-normal text-slate-400">/ {metrics.totalExams}</span>
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Reforço pedagógico ativo
+            {metrics.pendingExams} aguardando ciclo automático
           </p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs font-medium text-slate-500">Intervenções da IA e Pendências</p>
-          <p className="text-2xl font-bold text-sky-700 tabular-nums mt-2">
-            {metrics.aiInterventionsCount}
-            <span className="text-sm font-normal text-slate-500 ml-2">
-              / {metrics.pendingActivitiesCount} pendentes
-            </span>
+          <p className="text-xs font-medium text-slate-500">Matéria Mais Crítica</p>
+          <p className="text-lg font-bold text-slate-900 truncate mt-1.5">
+            {metrics.criticalSubject ? metrics.criticalSubject.subject.name : '—'}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
-            {geminiConfigured ? 'Motor Gemini 4 Hydrogen' : 'Regras Pedagógicas Demo'}
+          <p className="text-xs text-amber-700 font-medium font-mono tabular-nums mt-1">
+            {metrics.criticalSubject
+              ? `Média ${formatGradeTen(metrics.criticalSubject.avg)} (${metrics.criticalSubject.avg}%)`
+              : 'Sem notas registradas'}
           </p>
         </div>
       </section>
 
-      {/* Feed em Destaque ATIVIDADE DA IA + Lista de Apoio Prioritário */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6">
-          <div className="flex items-center justify-between gap-4 pb-4 border-b border-slate-100">
-            <div>
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-sky-600" />
-                <h2 className="text-base font-semibold text-slate-900">ATIVIDADE DA IA</h2>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Decisões autônomas de aprendizagem, aulas geradas e atualizações de trilha ({dataset.learningEvents.length} eventos processados)
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('intelligence')}
-              className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-800 whitespace-nowrap shrink-0"
-            >
-              Ver Registro Completo <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
+      {/* Âncora Principal: Alunos em Prioridade Máxima de Reprovação */}
+      <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+              Alerta Automático de Reprovação
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Classificação automática pela média geral (&lt; 6,0) e quantidade de matérias abaixo da média mínima.
+            </p>
           </div>
 
-          {recentAiFeed.length === 0 ? (
-            <div className="py-10 text-center">
-              <p className="text-sm text-slate-600">Nenhum evento autônomo registrado ainda neste ambiente.</p>
-              <button
-                type="button"
-                onClick={() => runAutonomousLearningDemo()}
-                className="mt-3 px-4 py-2 text-xs font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800"
-              >
-                Disparar Primeiro Ciclo Autônomo
-              </button>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 mt-2">
-              {recentAiFeed.map((item) => {
-                const sub = dataset.subjects.find((s) => s.id === item.subjectId);
-                const comp = dataset.competencies.find((c) => c.id === item.competencyId);
-                const priorityLabel =
-                  item.priority === 'HIGH'
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit shrink-0">
+            <button
+              type="button"
+              onClick={() => setRiskTab('MAXIMUM')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap ${
+                riskTab === 'MAXIMUM' ? 'bg-white text-red-700 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              Prioridade Máxima ({metrics.maxRiskCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setRiskTab('MODERATE')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap ${
+                riskTab === 'MODERATE' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              Atenção ({metrics.moderateRiskCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setRiskTab('ALL')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap ${
+                riskTab === 'ALL' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              Todos ({metrics.total})
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                <th className="py-3 px-4">Aluno</th>
+                <th className="py-3 px-4 text-right">Média Geral</th>
+                <th className="py-3 px-4">Onde se dá Melhor</th>
+                <th className="py-3 px-4">Onde é Mais Ruim</th>
+                <th className="py-3 px-4">Diagnóstico Automático de Risco</th>
+                <th className="py-3 px-4 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {priorityList.slice(0, 10).map((profile) => {
+                const riskColor =
+                  profile.riskLevel === 'MAXIMUM'
                     ? 'text-red-700'
-                    : item.priority === 'MEDIUM'
+                    : profile.riskLevel === 'MODERATE'
                       ? 'text-amber-700'
                       : 'text-emerald-700';
 
                 return (
-                  <div key={item.id} className="py-3.5 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                        <span className="font-mono font-medium text-slate-800">{item.pseudonymId}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{sub?.name || 'Disciplina'}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="font-mono">{comp?.code || item.competencyId}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className={`font-semibold ${priorityLabel}`}>
-                          PRIORIDADE {labelPriority(item.priority)}
+                  <tr key={profile.student.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="py-3 px-4">
+                      <button
+                        type="button"
+                        onClick={() => onSelectStudent(profile.student.id)}
+                        className="font-semibold text-slate-900 hover:text-sky-700 text-left block"
+                      >
+                        {profile.student.displayName}
+                      </button>
+                      <span className="text-xs text-slate-500">
+                        {profile.student.gradeLevel} ·{' '}
+                        <span className={`font-semibold ${riskColor}`}>
+                          {labelRiskShort(profile.riskLevel)}
                         </span>
-                      </div>
-                      <p className="text-sm font-medium text-slate-900 mt-1">
-                        {item.strategyChosen}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-0.5 line-clamp-2">
-                        {item.observedOutcome}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-xs font-mono text-slate-500 block">
-                        {item.createdAt.slice(0, 16).replace('T', ' ')}
                       </span>
-                      <span className="text-xs text-slate-500 block mt-0.5">
-                        Origem: {labelEngineSource(item.engineSource)}
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono tabular-nums">
+                      <span
+                        className={`text-sm font-bold ${
+                          profile.overallAverage < 60
+                            ? 'text-red-700'
+                            : profile.overallAverage < 70
+                              ? 'text-amber-700'
+                              : 'text-slate-900'
+                        }`}
+                      >
+                        {formatGradeTen(profile.overallAverage)}
                       </span>
-                    </div>
-                  </div>
+                      <span className="text-xs text-slate-400 block">{profile.overallAverage}%</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      {profile.bestSubject ? (
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span className="font-medium text-slate-900">
+                            {profile.bestSubject.subject.name}
+                          </span>
+                          <span className="font-mono tabular-nums text-emerald-700 font-semibold">
+                            {formatGradeTen(profile.bestSubject.average)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {profile.worstSubject ? (
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <TrendingDown className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                          <span className="font-medium text-slate-900">
+                            {profile.worstSubject.subject.name}
+                          </span>
+                          <span className="font-mono tabular-nums text-red-700 font-semibold">
+                            {formatGradeTen(profile.worstSubject.average)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-xs text-slate-600 max-w-xs">
+                      {profile.riskReason}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onSelectStudent(profile.student.id)}
+                        className="text-xs font-semibold text-sky-700 hover:underline whitespace-nowrap"
+                      >
+                        Ver Boletim →
+                      </button>
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          )}
-        </div>
 
-        {/* Competências com Maior Dificuldade e Fila de Reforço */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 flex flex-col justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Competências e Prioridades de Apoio</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Áreas com menor domínio e estudantes recebendo reforço ativo da IA
-            </p>
-
-            <div className="mt-4 space-y-3">
-              {topStrugglingCompetencies.map((comp) => (
-                <div key={comp.code} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100">
-                  <div className="min-w-0">
-                    <p className="text-xs font-mono text-slate-500">{comp.code}</p>
-                    <p className="text-sm font-medium text-slate-800 truncate">{comp.name}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className={`text-sm font-semibold tabular-nums ${comp.mastery < 70 ? 'text-amber-700' : 'text-slate-900'}`}>
-                      {comp.mastery}%
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-6 mb-3">
-              Estudantes em Reforço Pedagógico
-            </h3>
-            <div className="space-y-2.5">
-              {supportStudentsList.map((stu) => (
-                <button
-                  key={stu.id}
-                  type="button"
-                  onClick={() => onSelectStudent(stu.id)}
-                  className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-slate-200 hover:border-sky-300 hover:bg-slate-50 transition-colors text-left"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">{stu.displayName}</p>
-                    <p className="text-xs text-amber-700 mt-0.5">{labelPedagogicalStatus(stu.pedagogicalStatus)}</p>
-                  </div>
-                  <span className="text-sm font-semibold font-mono tabular-nums text-slate-800 shrink-0">
-                    {stu.averageScore}%
-                  </span>
-                </button>
-              ))}
-              {supportStudentsList.length === 0 && (
-                <p className="text-xs text-slate-500">Todos os estudantes matriculados estão em progresso ou com domínio consolidado.</p>
+              {priorityList.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                    Nenhum estudante nesta faixa de risco no momento.
+                  </td>
+                </tr>
               )}
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
       </section>
 
-      {/* Grade dos 5 Gráficos Executivos */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 1. Desempenho Acadêmico ao Longo do Tempo */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-slate-900">1. Desempenho Acadêmico ao Longo do Tempo</h3>
-          <p className="text-xs text-slate-500 mt-0.5 mb-4">
-            Evolução longitudinal da média da turma (%) e da taxa de conclusão (%)
-          </p>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={performanceOverTime}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="period" tick={{ fontSize: 12, fill: '#64748b' }} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#64748b' }} />
-                <Tooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Area
-                  type="monotone"
-                  dataKey="averageScore"
-                  name="Desempenho Médio (%)"
-                  stroke="#0284c7"
-                  fill="#e0f2fe"
-                  strokeWidth={2}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="completion"
-                  name="Taxa de Conclusão (%)"
-                  stroke="#16a34a"
-                  fill="#dcfce7"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+      {/* Revisões de Provas Feitas pela IA + Média por Matéria */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6">
+          <div className="flex items-center justify-between gap-4 pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <BookOpenCheck className="w-4 h-4 text-sky-700" />
+              <h2 className="text-base font-semibold text-slate-900">
+                Últimas Revisões de Provas Feitas pela IA
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('activities')}
+              className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline whitespace-nowrap"
+            >
+              Abrir Todas <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="divide-y divide-slate-100 mt-2">
+            {recentReviewedExams.map((res) => {
+              const stu = dataset.students.find((s) => s.id === res.studentId);
+              const sub = dataset.subjects.find((s) => s.id === res.subjectId);
+              const parsed = parseStructuredExamReview(res.aiPreliminaryFeedback);
+
+              return (
+                <div key={res.id} className="py-3.5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 text-slate-500">
+                      <span className="font-semibold text-slate-900">
+                        {stu?.displayName || res.studentId}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>{sub?.name || 'Disciplina'}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-mono">{res.submittedAt.slice(0, 10)}</span>
+                    </div>
+                    <span
+                      className={`font-mono font-bold tabular-nums ${
+                        res.percentage < 60
+                          ? 'text-red-700'
+                          : res.percentage < 75
+                            ? 'text-amber-700'
+                            : 'text-emerald-700'
+                      }`}
+                    >
+                      Nota {formatGradeTen(res.percentage)}
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-800">
+                    {parsed?.verdict || 'Revisão da prova concluída pela IA'}
+                  </p>
+                  {parsed?.whereStruggled && (
+                    <p className="text-xs text-slate-600 line-clamp-2">
+                      Onde errou: {parsed.whereStruggled}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+            {recentReviewedExams.length === 0 && (
+              <p className="py-8 text-center text-xs text-slate-500">
+                A IA está processando a revisão automática das provas...
+              </p>
+            )}
           </div>
         </div>
 
-        {/* 2. Progresso de Aprendizagem por Disciplina */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-slate-900">2. Progresso de Aprendizagem por Disciplina</h3>
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6">
+          <h3 className="text-base font-semibold text-slate-900">Média por Matéria (Ensino Médio)</h3>
           <p className="text-xs text-slate-500 mt-0.5 mb-4">
-            Domínio médio (%) nas disciplinas do currículo
+            Linha tracejada indica a média mínima de aprovação (60% / nota 6,0)
           </p>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={progressBySubject}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#64748b' }} />
-                <Tooltip />
-                <Bar dataKey="avgScore" name="Pontuação Média (%)" fill="#0f172a" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* 3. Comparativo de Desempenho por Turma */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-slate-900">3. Comparativo de Desempenho por Turma</h3>
-          <p className="text-xs text-slate-500 mt-0.5 mb-4">
-            Média de desempenho vs. taxa de conclusão por turma
-          </p>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={classComparison}>
+              <BarChart data={subjectChartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#64748b' }} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#64748b' }} />
                 <Tooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="averageScore" name="Média (%)" fill="#0284c7" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="completionRate" name="Conclusão (%)" fill="#0891b2" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* 4. Domínio de Competências */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-slate-900">4. Domínio de Competências</h3>
-          <p className="text-xs text-slate-500 mt-0.5 mb-4">
-            Percentual de domínio nas competências prioritárias do currículo
-          </p>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={competencyMastery} layout="vertical" margin={{ left: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 12, fill: '#64748b' }} />
-                <YAxis type="category" dataKey="code" width={92} tick={{ fontSize: 11, fill: '#334155' }} />
-                <Tooltip />
-                <Bar dataKey="mastery" name="Domínio (%)" radius={[0, 4, 4, 0]}>
-                  {competencyMastery.map((entry) => (
-                    <Cell
-                      key={entry.code}
-                      fill={entry.mastery >= 80 ? '#16a34a' : entry.mastery >= 70 ? '#0284c7' : '#d97706'}
-                    />
-                  ))}
-                </Bar>
+                <ReferenceLine y={60} stroke="#dc2626" strokeDasharray="4 4" />
+                <Bar dataKey="media" name="Média (%)" fill="#0f172a" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
       </section>
 
-      {/* 5. Visão Geral das Intervenções da IA */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">5. Visão Geral das Intervenções da IA</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Distribuição das intervenções pedagógicas autônomas por etapa do ciclo de vida
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('interventions')}
-            className="text-xs font-medium text-sky-700 hover:text-sky-800 whitespace-nowrap shrink-0"
+      {/* Modal Lançar Nota de Prova (Dispara Revisão Automática da IA) */}
+      {showGradeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveExamGrade}
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4"
           >
-            Gerenciar Intervenções →
-          </button>
-        </div>
-        <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={interventionsOverview}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#64748b' }} />
-              <Tooltip />
-              <Bar dataKey="count" name="Intervenções" radius={[4, 4, 0, 0]}>
-                {interventionsOverview.map((entry) => (
-                  <Cell key={entry.status} fill={entry.color} />
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Lançar Nota de Prova</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Ao salvar a nota, a IA revisa a prova automaticamente e recalcula o risco de reprovação.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Aluno</label>
+              <select
+                value={gradeStudentId}
+                onChange={(e) => setGradeStudentId(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                {dataset.students.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.displayName} ({s.gradeLevel})
+                  </option>
                 ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Matéria</label>
+              <select
+                value={gradeSubjectId}
+                onChange={(e) => {
+                  setGradeSubjectId(e.target.value);
+                  const first = dataset.competencies.find((c) => c.subjectId === e.target.value);
+                  if (first) setGradeCompetencyId(first.id);
+                }}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                {dataset.subjects.map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Conteúdo / Competência da Prova</label>
+              <select
+                value={gradeCompetencyId}
+                onChange={(e) => setGradeCompetencyId(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                {dataset.competencies
+                  .filter((c) => c.subjectId === gradeSubjectId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Nota obtida na prova (0,0 a 10,0)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="10"
+                required
+                value={gradeScoreTen}
+                onChange={(e) => setGradeScoreTen(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono tabular-nums"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowGradeModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingGrade}
+                className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60"
+              >
+                {savingGrade ? 'Salvando e Revisando...' : 'Salvar e Revisar com IA'}
+              </button>
+            </div>
+          </form>
         </div>
-      </section>
+      )}
     </div>
   );
 };

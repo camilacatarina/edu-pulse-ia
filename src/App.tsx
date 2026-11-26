@@ -6,16 +6,13 @@
 import React, { useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppShell, NavSectionId } from './components/layout/AppShell';
-import { AIIntelligenceCenterModule } from './components/modules/AIIntelligenceCenterModule';
 import { ActivitiesAssessmentsModule } from './components/modules/ActivitiesAssessmentsModule';
-import { InterventionsModule } from './components/modules/InterventionsModule';
-import { LearningPathsModule } from './components/modules/LearningPathsModule';
 import { OnboardingView } from './components/modules/OnboardingView';
 import { OverviewModule } from './components/modules/OverviewModule';
-import { ReportsInsightsModule } from './components/modules/ReportsInsightsModule';
 import { SettingsModule } from './components/modules/SettingsModule';
 import { StudentsClassesModule } from './components/modules/StudentsClassesModule';
 import { StudentPortalView } from './components/modules/StudentPortalView';
+import { SupportAndPathsModule } from './components/modules/SupportAndPathsModule';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
 
 const MainWorkspace: React.FC = () => {
@@ -58,11 +55,8 @@ const MainWorkspace: React.FC = () => {
               onSelectStudent={setSelectedStudentId}
             />
           )}
-          {activeTab === 'intelligence' && <AIIntelligenceCenterModule />}
-          {activeTab === 'paths' && <LearningPathsModule />}
           {activeTab === 'activities' && <ActivitiesAssessmentsModule />}
-          {activeTab === 'interventions' && <InterventionsModule />}
-          {activeTab === 'reports' && <ReportsInsightsModule />}
+          {activeTab === 'support' && <SupportAndPathsModule />}
           {activeTab === 'settings' && <SettingsModule />}
         </>
       )}

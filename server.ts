@@ -139,6 +139,32 @@ async function startServer() {
     }
   });
 
+  app.post('/api/autonomous-engine/auto-step', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await autonomousLearningEngine.selectAndProcessAutonomousStep(req.body);
+      res.json({
+        ok: true,
+        ...result,
+        processedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/autonomous-engine/auto-review-exam', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await autonomousLearningEngine.selectAndReviewExam(req.body);
+      res.json({
+        ok: true,
+        ...result,
+        processedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/internal/learning-cycle', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const configuredSecret = process.env.INTERNAL_CRON_SECRET?.trim();
@@ -211,14 +237,14 @@ async function startServer() {
           }[];
         }>({
           systemInstruction:
-            'Você é um especialista em currículo educacional da plataforma EduPulse AI. Gere materiais pedagógicos claros em português do Brasil (pt-BR), estritamente alinhados à faixa escolar, disciplina, competência e objetivo informados.',
-          prompt: `Crie um material do tipo "${input.materialType}" em português do Brasil (pt-BR) para:
-Faixa Escolar: ${input.gradeLevel}
+            'Você é um especialista em currículo do Ensino Médio brasileiro (BNCC e ENEM) na plataforma EduPulse AI. Gere materiais didáticos claros e objetivos em português do Brasil (pt-BR).',
+          prompt: `Crie um material do tipo "${input.materialType}" em português do Brasil (pt-BR) para o Ensino Médio:
+Série: ${input.gradeLevel}
 Disciplina: ${input.subjectName}
 Competência: ${input.competencyCode} — ${input.competencyName}
-Dificuldade: ${input.difficulty}
-Objetivo Pedagógico: ${input.pedagogicalObjective}
-Inclua 2 seções explicativas curtas e 3 questões alinhadas à competência com gabarito e explicações.`,
+Nível: ${input.difficulty}
+Objetivo: ${input.pedagogicalObjective}
+Inclua 2 seções explicativas curtas e 3 questões de Ensino Médio com gabarito e explicações.`,
           responseSchema: {
             type: Type.OBJECT,
             properties: {

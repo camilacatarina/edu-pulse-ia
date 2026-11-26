@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Award, BookOpen, CheckCircle2, Compass, Sparkles } from 'lucide-react';
+import { BookOpen, CheckCircle2, Compass, Sparkles } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { LearningActivity } from '../../types/domain';
 import {
@@ -35,9 +35,9 @@ export const StudentPortalView: React.FC = () => {
     return (
       <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
         <BookOpen className="w-8 h-8 text-slate-400 mx-auto mb-3" />
-        <h2 className="text-lg font-semibold text-slate-900">Seu Espaço de Aprendizagem Está Pronto</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Seu Portal de Estudos Está Pronto</h2>
         <p className="text-sm text-slate-600 mt-1 max-w-md mx-auto">
-          Peça ao seu professor para vincular o UID da sua conta ao seu perfil de estudante para que suas atividades personalizadas e trilha apareçam aqui.
+          Peça ao seu professor para vincular seu login ao seu cadastro da turma para ver suas atividades aqui.
         </p>
       </div>
     );
@@ -47,7 +47,6 @@ export const StudentPortalView: React.FC = () => {
   const myPending = myActivities.filter((a) => a.status !== 'COMPLETED');
   const myCompleted = myActivities.filter((a) => a.status === 'COMPLETED');
   const myPaths = dataset.learningPaths.filter((p) => p.studentId === student.id);
-  const myRecommendations = dataset.aiInsights.filter((i) => i.studentId === student.id);
 
   const handleOpenActivity = (act: LearningActivity) => {
     setSelectedActivity(act);
@@ -60,38 +59,37 @@ export const StudentPortalView: React.FC = () => {
     if (!selectedActivity) return;
     const res = await submitActivityAttempt(selectedActivity.id, answers);
     setFeedbackBanner(
-      `Nota: ${res.scorePercentage}% — ${res.feedback} Sua trilha de aprendizagem foi atualizada automaticamente.`
+      `Nota: ${res.scorePercentage}% — ${res.feedback}`
     );
     setSelectedActivity(null);
   };
 
   return (
-    <div className="space-y-8">
-      {/* Cabeçalho Acolhedor */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-6 border-b border-slate-200">
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-5 border-b border-slate-200">
         <div>
           <p className="text-xs font-medium text-sky-700">
-            Espaço Pessoal de Aprendizagem {mode === 'DEMO' ? '· DADOS DEMO' : ''}
+            Ensino Médio · {student.gradeLevel}
           </p>
           <h1 className="text-2xl font-bold text-slate-900 mt-1">
-            Bem-vindo(a) de volta, {student.displayName}
+            Olá, {student.displayName}
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Cada exercício concluído ajuda o EduPulse a adaptar seus próximos passos no seu próprio ritmo.
+            Acompanhe suas atividades e sua trilha de estudos para o Ensino Médio e ENEM.
           </p>
         </div>
 
         {mode === 'DEMO' && (
           <div className="shrink-0">
-            <label className="block text-xs text-slate-500 mb-1">Pré-visualizar Conta de Estudante</label>
+            <label className="block text-xs text-slate-500 mb-1">Trocar Aluno (Demo)</label>
             <select
               value={student.id}
               onChange={(e) => setActiveStudentId(e.target.value)}
               className="px-3 py-2 text-xs font-medium bg-white border border-slate-200 rounded-lg"
             >
-              {dataset.students.slice(0, 12).map((s) => (
+              {dataset.students.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.displayName} ({s.pseudonymId})
+                  {s.displayName} ({s.gradeLevel})
                 </option>
               ))}
             </select>
@@ -105,35 +103,35 @@ export const StudentPortalView: React.FC = () => {
         </div>
       )}
 
-      {/* Faixa de Progresso */}
+      {/* Resumo */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs text-slate-500">Meu Progresso</p>
+          <p className="text-xs text-slate-500">Sua Média</p>
           <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">
             {student.averageScore}%
           </p>
           <p className="text-xs text-sky-700 font-medium mt-1">
-            Etapa atual: {labelPedagogicalStatus(student.pedagogicalStatus)}
+            {labelPedagogicalStatus(student.pedagogicalStatus)}
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs text-slate-500">Atividades Concluídas</p>
+          <p className="text-xs text-slate-500">Atividades</p>
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">
-            {myCompleted.length}
+            {myCompleted.length} concluídas
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            {myPending.length} prontas para você explorar
+            {myPending.length} pendentes
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs text-slate-500">Próximo Objetivo</p>
+          <p className="text-xs text-slate-500">Foco Atual</p>
           <p className="text-sm font-semibold text-slate-900 mt-2">
-            {myPaths[0]?.educationalObjective || 'Conclua sua próxima prática guiada'}
+            {myPaths[0]?.title || 'Prática guiada de revisão'}
           </p>
         </div>
       </section>
 
-      {/* Executor de Atividade Ativa */}
+      {/* Executor */}
       {selectedActivity && (
         <form
           onSubmit={handleSubmit}
@@ -173,7 +171,7 @@ export const StudentPortalView: React.FC = () => {
                     required
                     value={answers[q.id] || ''}
                     onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
-                    placeholder="Compartilhe seu raciocínio..."
+                    placeholder="Escreva sua resposta..."
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
                   />
                 ) : (
@@ -204,12 +202,12 @@ export const StudentPortalView: React.FC = () => {
             disabled={engineProcessing}
             className="px-5 py-2.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60"
           >
-            {engineProcessing ? 'Verificando e Atualizando Sua Trilha...' : 'Enviar Atividade'}
+            {engineProcessing ? 'Enviando e atualizando trilha...' : 'Enviar Atividade'}
           </button>
         </form>
       )}
 
-      {/* Divisão Principal: Minhas Atividades + Minha Trilha de Aprendizagem */}
+      {/* Minhas Atividades + Trilha */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
           <div className="flex items-center gap-2">
@@ -219,7 +217,7 @@ export const StudentPortalView: React.FC = () => {
 
           {myPending.length === 0 ? (
             <p className="text-sm text-slate-500">
-              Você concluiu todas as atividades atribuídas no momento. Excelente ritmo!
+              Tudo em dia! Você já concluiu suas atividades pendentes.
             </p>
           ) : (
             <div className="space-y-3">
@@ -231,7 +229,7 @@ export const StudentPortalView: React.FC = () => {
                   <div>
                     <p className="text-sm font-semibold text-slate-900">{act.title}</p>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {labelActivityType(act.type)} · {labelDifficulty(act.difficulty)} · {act.questions.length} questões
+                      {labelActivityType(act.type)} · {act.questions.length} questões
                     </p>
                   </div>
                   <button
@@ -239,7 +237,7 @@ export const StudentPortalView: React.FC = () => {
                     onClick={() => handleOpenActivity(act)}
                     className="px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 shrink-0"
                   >
-                    Iniciar
+                    Responder
                   </button>
                 </div>
               ))}
@@ -249,7 +247,7 @@ export const StudentPortalView: React.FC = () => {
           {myCompleted.length > 0 && (
             <div className="pt-4 border-t border-slate-100 space-y-2">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Concluídas e Feedback Formativo
+                Concluídas
               </h3>
               {myCompleted.map((act) => (
                 <div key={act.id} className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
@@ -274,12 +272,12 @@ export const StudentPortalView: React.FC = () => {
         <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
           <div className="flex items-center gap-2">
             <Compass className="w-4 h-4 text-sky-700" />
-            <h2 className="text-base font-semibold text-slate-900">Minha Trilha de Aprendizagem e Aulas Recomendadas</h2>
+            <h2 className="text-base font-semibold text-slate-900">Minha Trilha de Estudos</h2>
           </div>
 
           {myPaths.length === 0 ? (
             <p className="text-sm text-slate-500">
-              Conclua uma atividade ao lado para gerar sua trilha personalizada passo a passo.
+              Conclua uma atividade para receber sua trilha personalizada.
             </p>
           ) : (
             <div className="space-y-4">
@@ -296,9 +294,7 @@ export const StudentPortalView: React.FC = () => {
                     {path.modules.map((mod) => (
                       <div key={mod.order} className="flex items-start justify-between gap-2 text-xs py-1.5 border-t border-slate-100">
                         <div>
-                          <p className="font-medium text-slate-800">
-                            {mod.order}. {mod.title}
-                          </p>
+                          <p className="font-medium text-slate-800">{mod.order}. {mod.title}</p>
                           <p className="text-slate-500 mt-0.5">{mod.shortLesson}</p>
                         </div>
                         <span
@@ -315,21 +311,6 @@ export const StudentPortalView: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {myRecommendations.length > 0 && (
-            <div className="pt-3 border-t border-slate-100 space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                <Award className="w-3.5 h-3.5 text-sky-700" />
-                Próximo Foco Recomendado
-              </h3>
-              {myRecommendations.slice(0, 2).map((rec) => (
-                <div key={rec.id} className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-xs text-slate-800">
-                  <p className="font-semibold text-sky-900">{rec.learningObjective}</p>
-                  <p className="mt-1 text-slate-700">{rec.strategyChosen}</p>
                 </div>
               ))}
             </div>

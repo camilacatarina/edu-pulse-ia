@@ -34,6 +34,52 @@ export const AutonomousEventInputSchema = z.object({
 
 export type AutonomousEventInput = z.infer<typeof AutonomousEventInputSchema>;
 
+export const AutoStepCandidateSchema = z.object({
+  pseudonymId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_-]+$/),
+  gradeLevel: z.string().min(1).max(40),
+  subjectName: z.string().min(1).max(100),
+  competencyCode: z.string().min(1).max(32),
+  competencyName: z.string().min(1).max(140),
+  recentScores: z.array(z.number().min(0).max(100)).min(1).max(20),
+  latestScore: z.number().min(0).max(100),
+  completedActivitiesCount: z.number().int().min(0).max(500),
+  hasPendingActivity: z.boolean().default(false),
+  hasOpenIntervention: z.boolean().default(false),
+});
+
+export const AutoStepInputSchema = z.object({
+  institutionId: z.string().min(2).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+  candidates: z.array(AutoStepCandidateSchema).min(1).max(50),
+  demoMode: z.boolean().optional().default(false),
+});
+
+export type AutoStepCandidate = z.infer<typeof AutoStepCandidateSchema>;
+
+export const AutoExamCandidateSchema = z.object({
+  resultId: z.string().min(2).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+  pseudonymId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_-]+$/),
+  gradeLevel: z.string().min(1).max(40),
+  subjectName: z.string().min(1).max(100),
+  competencyCode: z.string().min(1).max(32),
+  competencyName: z.string().min(1).max(140),
+  score: z.number().min(0).max(100),
+  maxScore: z.number().positive().max(100),
+  percentage: z.number().min(0).max(100),
+  studentOverallAvg: z.number().min(0).max(100),
+  bestSubjectName: z.string().max(100).optional().default(''),
+  worstSubjectName: z.string().max(100).optional().default(''),
+  recentScores: z.array(z.number().min(0).max(100)).min(1).max(20),
+  alreadyReviewed: z.boolean().default(false),
+});
+
+export const AutoExamReviewInputSchema = z.object({
+  institutionId: z.string().min(2).max(128).regex(/^[a-zA-Z0-9_-]+$/),
+  exams: z.array(AutoExamCandidateSchema).min(1).max(50),
+  demoMode: z.boolean().optional().default(false),
+});
+
+export type AutoExamCandidate = z.infer<typeof AutoExamCandidateSchema>;
+
 const FORBIDDEN_SYSTEM_PATTERNS = [
   /grant\s+admin/i,
   /alter\s+permission/i,
@@ -224,20 +270,19 @@ function buildDeterministicDemoAnalysis(
     },
   ];
 
-  const isAlgebra = /equa|álgebra|algebra/i.test(input.competencyName);
-  const modules = isAlgebra
+  const isFunctionOrMath = /funç|func|mat/i.test(input.competencyName) || /mat/i.test(input.subjectName);
+  const modules = isFunctionOrMath
     ? [
-        { order: 1, title: 'Fundamentos da Igualdade e Equilíbrio', shortLesson: 'Visualizando equações como balanças em equilíbrio.', exerciseFocus: '3 verificações guiadas de igualdade', status: 'COMPLETED' as const },
-        { order: 2, title: 'Domínio das Operações Inversas', shortLesson: 'Isolando incógnitas com operações opostas passo a passo.', exerciseFocus: '4 exercícios de operações inversas', status: needsSupport ? ('IN_PROGRESS' as const) : ('COMPLETED' as const) },
-        { order: 3, title: 'Resolução de Equações Simples', shortLesson: 'Agrupando termos e preservando a igualdade.', exerciseFocus: '3 exercícios progressivos', status: needsSupport ? ('UPCOMING' as const) : ('IN_PROGRESS' as const) },
-        { order: 4, title: 'Equações com Parênteses e Distributiva', shortLesson: 'Expandindo expressões agrupadas com atenção aos sinais.', exerciseFocus: '2 problemas intermediários', status: 'UPCOMING' as const },
-        { order: 5, title: 'Exercícios de Consolidação', shortLesson: 'Resolução de situações-problema contextualizadas.', exerciseFocus: 'Quiz curto de consolidação', status: 'UPCOMING' as const },
+        { order: 1, title: 'Conceito e Lei de Formação', shortLesson: `Revisando definições e leitura gráfica de ${input.competencyName}.`, exerciseFocus: '3 questões introdutórias', status: 'COMPLETED' as const },
+        { order: 2, title: 'Análise Gráfica e Pontos Críticos', shortLesson: 'Identificação de raízes, coeficientes e interpretação no plano cartesiano.', exerciseFocus: '3 exercícios guiados', status: needsSupport ? ('IN_PROGRESS' as const) : ('COMPLETED' as const) },
+        { order: 3, title: 'Problemas Contextualizados (ENEM)', shortLesson: 'Modelagem de situações-problema reais do Ensino Médio.', exerciseFocus: '2 questões comentadas', status: needsSupport ? ('UPCOMING' as const) : ('IN_PROGRESS' as const) },
+        { order: 4, title: 'Consolidação da Competência', shortLesson: 'Revisão sintética e verificação de domínio.', exerciseFocus: 'Quiz rápido de revisão', status: 'UPCOMING' as const },
       ]
     : [
-        { order: 1, title: `Fundamentos de ${input.competencyName}`, shortLesson: `Explicação objetiva sobre ${focusTopic}.`, exerciseFocus: '3 exercícios introdutórios', status: 'COMPLETED' as const },
-        { order: 2, title: `Raciocínio Guiado em ${input.subjectName}`, shortLesson: 'Exemplos resolvidos focando os pontos de maior dúvida.', exerciseFocus: '3 exercícios com apoio', status: needsSupport ? ('IN_PROGRESS' as const) : ('COMPLETED' as const) },
-        { order: 3, title: `Prática Aplicada: ${focusTopic}`, shortLesson: 'Conexão dos conceitos com problemas estruturados.', exerciseFocus: '2 tarefas intermediárias', status: needsSupport ? ('UPCOMING' as const) : ('IN_PROGRESS' as const) },
-        { order: 4, title: 'Consolidação e Verificação de Domínio', shortLesson: 'Revisão sintética antes da próxima etapa.', exerciseFocus: 'Quiz de revisão (3 itens)', status: 'UPCOMING' as const },
+        { order: 1, title: `Base Conceitual: ${input.competencyName}`, shortLesson: `Explicação objetiva sobre ${focusTopic}.`, exerciseFocus: '3 exercícios introdutórios', status: 'COMPLETED' as const },
+        { order: 2, title: `Resolução Guiada em ${input.subjectName}`, shortLesson: 'Exemplos resolvidos focando os pontos de maior dúvida.', exerciseFocus: '3 exercícios com apoio', status: needsSupport ? ('IN_PROGRESS' as const) : ('COMPLETED' as const) },
+        { order: 3, title: `Questões Estilo ENEM: ${focusTopic}`, shortLesson: 'Aplicação dos conceitos em questões contextualizadas.', exerciseFocus: '2 tarefas intermediárias', status: needsSupport ? ('UPCOMING' as const) : ('IN_PROGRESS' as const) },
+        { order: 4, title: 'Consolidação e Revisão', shortLesson: 'Revisão sintética antes da próxima etapa.', exerciseFocus: 'Quiz de revisão (3 itens)', status: 'UPCOMING' as const },
       ];
 
   return {
@@ -246,37 +291,37 @@ function buildDeterministicDemoAnalysis(
     competency: `${input.competencyCode} — ${input.competencyName}`,
     evidence: evidenceText,
     identifiedGap: needsSupport
-      ? `Fluência em desenvolvimento em ${focusTopic} (${input.competencyName}); a resolução em múltiplas etapas se beneficia de apoio estruturado.`
-      : `Nenhuma lacuna crítica identificada em ${input.competencyName}; pronto para consolidação e aumento gradual de desafio.`,
+      ? `Dificuldade observada em ${focusTopic} (${input.competencyName}); recomendado reforço prático guiado.`
+      : `Bom desempenho em ${input.competencyName}; pronto para consolidar e avançar.`,
     confidence,
     uncertaintyNote,
-    learningObjective: `Fortalecer a precisão conceitual e a autonomia em ${input.competencyName} (${input.gradeLevel}) até atingir >=80% de domínio.`,
+    learningObjective: `Consolidar ${input.competencyName} (${input.gradeLevel}) até atingir >=80% de acerto.`,
     recommendedStrategy: needsSupport
-      ? 'Microaula Guiada + Sequência de Prática Estruturada'
+      ? 'Revisão Guiada + Exercícios Práticos'
       : isMastering
-        ? 'Desafio de Aprofundamento e Transferência'
-        : 'Revisão Espaçada e Consolidação',
+        ? 'Aprofundamento Estilo ENEM'
+        : 'Revisão e Consolidação',
     difficultyLevel,
     nextAction,
     priority,
     pedagogicalStatusRecommendation,
     generatedActivity: {
-      title: `Reforço Adaptativo: ${input.competencyName}`,
+      title: `Reforço: ${input.competencyName}`,
       type: needsSupport ? 'Practice Exercises' : 'Revision Quiz',
-      shortLessonSummary: `Revisão direcionada para ${input.competencyName} (${input.gradeLevel}): concentre-se em validar cada etapa e conectar ${focusTopic} aos princípios centrais antes de finalizar a questão.`,
+      shortLessonSummary: `Resumo para ${input.competencyName} (${input.gradeLevel}): revise os conceitos centrais de ${focusTopic} e confira cada etapa antes de responder.`,
       questions,
     },
     learningPathPlan: {
-      title: `Trilha Adaptativa: ${input.competencyName}`,
+      title: `Trilha de Estudo: ${input.competencyName}`,
       estimatedLevel,
-      masteryCriterion: 'Atingir >= 80% em duas verificações formativas consecutivas',
+      masteryCriterion: 'Atingir >= 80% nas verificações da competência',
       modules,
     },
     interventionPlan: needsSupport
       ? {
           needed: true,
-          strategy: 'Microaula de Revisão + 3 Exercícios Guiados + Quiz de Consolidação',
-          contentSummary: `Intervenção autônoma atribuída para ${input.pseudonymId} em ${input.subjectName} (${input.competencyCode}). Inclui revisão guiada, exercícios progressivos e nova verificação curta.`,
+          strategy: 'Revisão Guiada + Exercícios Práticos',
+          contentSummary: `Apoio criado para ${input.pseudonymId} em ${input.subjectName} (${input.competencyName}) com foco nos pré-requisitos e questões contextualizadas.`,
         }
       : undefined,
     engineSource,
@@ -324,32 +369,30 @@ export class AutonomousLearningEngine {
 
     const { evidenceText } = buildEvidenceSummary(input);
 
-    const systemInstruction = `Você é o Motor Autônomo de Aprendizagem (Autonomous Learning Engine) da plataforma EduPulse AI.
-Seu papel é realizar análises pedagógicas de apoio e criar materiais de ensino personalizados em português do Brasil (pt-BR).
-REGRAS ESTRITAS DE SEGURANÇA E PRIVACIDADE:
-1. Você recebe apenas o identificador pseudonimizado do estudante (nunca nome completo, e-mail ou documentos).
+    const systemInstruction = `Você é o Motor de Apoio Pedagógico da plataforma EduPulse AI, voltada exclusivamente ao Ensino Médio brasileiro (1ª, 2ª e 3ª séries, BNCC e ENEM).
+Seu papel é analisar resultados escolares e criar atividades curtas e objetivas em português do Brasil (pt-BR).
+REGRAS DE SEGURANÇA E PRIVACIDADE:
+1. Você recebe apenas o código pseudonimizado do estudante (nunca nome completo, e-mail ou documentos).
 2. Nunca gere diagnósticos médicos, psicológicos ou clínicos.
-3. Nunca rotule o estudante como incapaz, fraco ou problemático; utilize linguagem pedagógica acolhedora.
-4. Nunca sugira ações punitivas, reprovação automática, exclusão ou alteração de permissões do sistema.
-5. Não tire conclusões definitivas a partir de uma única nota baixa; indique a incerteza em confidence (0-1) e uncertaintyNote.
-6. Todo o conteúdo gerado (títulos, explicações, perguntas, alternativas, gabaritos, módulos e estratégias) DEVE ser escrito em português do Brasil claro e adequado à faixa escolar.`;
+3. Utilize linguagem pedagógica acolhedora, clara e prática para professores e alunos do Ensino Médio.
+4. Nunca sugira ações punitivas, reprovação automática ou exclusão.
+5. Indique o grau de confiança em confidence (0-1) e uncertaintyNote de forma simples.
+6. Todo o conteúdo gerado DEVE ser em português do Brasil e alinhado ao Ensino Médio.`;
 
-    const prompt = `Analise este evento educacional pseudonimizado e retorne a recomendação pedagógica estruturada em português (pt-BR):
-- ID Pseudonimizado do Estudante: ${input.pseudonymId}
-- Faixa Escolar: ${input.gradeLevel}
+    const prompt = `Analise este evento educacional do Ensino Médio e retorne a recomendação pedagógica em português (pt-BR):
+- Estudante (código): ${input.pseudonymId}
+- Série: ${input.gradeLevel}
 - Disciplina: ${input.subjectName}
 - Competência: ${input.competencyCode} — ${input.competencyName}
-- Tipo de Evento: ${input.eventType}
 - Evidências: ${evidenceText}
-- Histórico Recente de Notas (%): ${JSON.stringify(input.recentScores)}
-- Atividades Concluídas: ${input.completedActivitiesCount}
-- Pontos de Atenção Observados: ${input.missedTopics.length > 0 ? input.missedTopics.join(', ') : 'Nenhum especificado'}
+- Notas recentes (%): ${JSON.stringify(input.recentScores)}
+- Pontos de atenção: ${input.missedTopics.length > 0 ? input.missedTopics.join(', ') : 'Nenhum especificado'}
 
-Produza em português (pt-BR):
-1. Diagnóstico pedagógico da lacuna e calibração de confiança.
-2. Atividade personalizada com 3 questões (1 multiple_choice com 4 opções, 1 true_false com ["Verdadeiro","Falso"], 1 short_answer).
-3. Trilha de aprendizagem atualizada com 4 a 5 módulos sequenciais.
-4. Definição de intervenção automática de baixo risco (interventionNeeded: true quando a nota ou média recente for < 72%).`;
+Produza em português (pt-BR) de forma simples e direta:
+1. Diagnóstico pedagógico claro e objetivo.
+2. Atividade com 3 questões de nível Ensino Médio (1 multiple_choice com 4 opções, 1 true_false com ["Verdadeiro","Falso"], 1 short_answer).
+3. Trilha de estudo com 4 módulos curtos e progressivos.
+4. Intervenção automática (interventionNeeded: true quando nota ou média recente for < 72%).`;
 
     const responseSchema = {
       type: Type.OBJECT,
@@ -527,6 +570,280 @@ Produza em português (pt-BR):
       analysis,
       idempotentHit: false,
       geminiConfigured: true,
+    };
+  }
+
+  /**
+   * Decide de forma autônoma qual estudante e competência demandam ação imediata
+   * da IA sem intervenção humana, priorizando lacunas sem apoio pendente.
+   */
+  async selectAndProcessAutonomousStep(rawInput: unknown): Promise<{
+    selectedCandidate: AutoStepCandidate;
+    selectionReason: string;
+    eventId: string;
+    idempotencyKey: string;
+    analysis: StructuredAutonomousAnalysis;
+    idempotentHit: boolean;
+    geminiConfigured: boolean;
+  }> {
+    const parsed = AutoStepInputSchema.parse(rawInput);
+
+    const ranked = [...parsed.candidates].sort((a, b) => {
+      const aUrgency =
+        (a.latestScore < 72 ? 100 : a.latestScore < 80 ? 50 : 10) +
+        (!a.hasPendingActivity ? 30 : 0) +
+        (!a.hasOpenIntervention && a.latestScore < 72 ? 25 : 0) +
+        (100 - a.latestScore) * 0.2;
+      const bUrgency =
+        (b.latestScore < 72 ? 100 : b.latestScore < 80 ? 50 : 10) +
+        (!b.hasPendingActivity ? 30 : 0) +
+        (!b.hasOpenIntervention && b.latestScore < 72 ? 25 : 0) +
+        (100 - b.latestScore) * 0.2;
+      return bUrgency - aUrgency;
+    });
+
+    const chosen = ranked[0];
+    const selectionReason =
+      chosen.latestScore < 72
+        ? `Prioridade automática: média ${chosen.latestScore}% em ${chosen.competencyName} sem reforço ativo.`
+        : chosen.latestScore < 80
+          ? `Consolidação automática: ${chosen.competencyName} com ${chosen.latestScore}% pronta para fixação.`
+          : `Avanço automático: ${chosen.competencyName} atingiu ${chosen.latestScore}% e avançou de nível.`;
+
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const eventId = `evt_auto_${suffix}`;
+    const idempotencyKey = `idem_auto_${chosen.pseudonymId}_${chosen.competencyCode}_${Math.round(chosen.latestScore)}_${suffix}`;
+
+    const out = await this.processEvent({
+      eventId,
+      idempotencyKey,
+      eventType: 'StudentProgressUpdated',
+      institutionId: parsed.institutionId,
+      pseudonymId: chosen.pseudonymId,
+      gradeLevel: chosen.gradeLevel,
+      subjectName: chosen.subjectName,
+      competencyCode: chosen.competencyCode,
+      competencyName: chosen.competencyName,
+      recentScores: chosen.recentScores,
+      latestScore: chosen.latestScore,
+      completedActivitiesCount: chosen.completedActivitiesCount,
+      missedTopics: chosen.latestScore < 75 ? [chosen.competencyName] : [],
+      demoMode: parsed.demoMode,
+    });
+
+    return {
+      selectedCandidate: chosen,
+      selectionReason,
+      eventId,
+      idempotencyKey,
+      ...out,
+    };
+  }
+
+  /**
+   * Seleciona automaticamente a prova mais urgente sem revisão da IA
+   * (priorizando alunos com risco máximo de reprovação / notas < 60%),
+   * produz a revisão comentada da prova e dispara o plano de recuperação.
+   */
+  async selectAndReviewExam(rawInput: unknown): Promise<{
+    selectedExam: AutoExamCandidate;
+    selectionReason: string;
+    examReview: {
+      verdict: string;
+      whatWentWell: string;
+      whereStruggled: string;
+      recommendation: string;
+      failureRiskAlert: 'PRIORIDADE_MAXIMA' | 'ATENCAO' | 'REGULAR';
+      reviewText: string;
+      engineSource: EngineSource;
+    };
+    eventId: string;
+    idempotencyKey: string;
+    analysis: StructuredAutonomousAnalysis;
+    geminiConfigured: boolean;
+  }> {
+    const parsed = AutoExamReviewInputSchema.parse(rawInput);
+
+    const pending = parsed.exams.filter((e) => !e.alreadyReviewed);
+    const pool = pending.length > 0 ? pending : parsed.exams;
+
+    const ranked = [...pool].sort((a, b) => {
+      const aUrgency =
+        (a.studentOverallAvg < 60 ? 120 : a.studentOverallAvg < 70 ? 60 : 10) +
+        (a.percentage < 60 ? 90 : a.percentage < 72 ? 45 : 5) +
+        (100 - a.percentage) * 0.3;
+      const bUrgency =
+        (b.studentOverallAvg < 60 ? 120 : b.studentOverallAvg < 70 ? 60 : 10) +
+        (b.percentage < 60 ? 90 : b.percentage < 72 ? 45 : 5) +
+        (100 - b.percentage) * 0.3;
+      return bUrgency - aUrgency;
+    });
+
+    const chosen = ranked[0];
+    const failureRiskAlert: 'PRIORIDADE_MAXIMA' | 'ATENCAO' | 'REGULAR' =
+      chosen.studentOverallAvg < 60 || chosen.percentage < 55
+        ? 'PRIORIDADE_MAXIMA'
+        : chosen.studentOverallAvg < 70 || chosen.percentage < 70
+          ? 'ATENCAO'
+          : 'REGULAR';
+
+    const gradeTen = (chosen.percentage / 10).toFixed(1).replace('.', ',');
+    const selectionReason =
+      failureRiskAlert === 'PRIORIDADE_MAXIMA'
+        ? `Prioridade máxima de reprovação: prova de ${chosen.subjectName} com nota ${gradeTen} (${chosen.percentage}%).`
+        : failureRiskAlert === 'ATENCAO'
+          ? `Atenção preventiva: prova de ${chosen.subjectName} com nota ${gradeTen} (${chosen.percentage}%).`
+          : `Revisão automática da prova de ${chosen.subjectName} (${gradeTen}).`;
+
+    const buildDemoExamReview = (source: EngineSource) => {
+      const verdict =
+        chosen.percentage < 60
+          ? `Risco de reprovação em ${chosen.subjectName} (nota ${gradeTen} / 10).`
+          : chosen.percentage < 75
+            ? `Desempenho intermediário em ${chosen.subjectName} (nota ${gradeTen} / 10).`
+            : `Bom domínio em ${chosen.subjectName} (nota ${gradeTen} / 10).`;
+      const whatWentWell =
+        chosen.percentage >= 70
+          ? `O estudante compreendeu os conceitos centrais de ${chosen.competencyName} e aplicou bem o raciocínio inicial.`
+          : chosen.bestSubjectName
+            ? `Demonstrou boa leitura de enunciado em ${chosen.competencyCode}, com facilidade observada em ${chosen.bestSubjectName} que pode apoiar o raciocínio.`
+            : `Identificou corretamente os dados iniciais em parte das questões de ${chosen.competencyCode}.`;
+      const whereStruggled =
+        chosen.percentage < 60
+          ? `Erros críticos na execução passo a passo e aplicação das propriedades de ${chosen.competencyName}, impactando a nota final.`
+          : chosen.percentage < 75
+            ? `Deslizes pontuais na interpretação de questões contextualizadas de ${chosen.competencyName}.`
+            : `Sem erros estruturais relevantes nesta avaliação.`;
+      const recommendation =
+        chosen.percentage < 60
+          ? `Lista automática de recuperação criada pela IA para elevar a média de ${chosen.subjectName} acima de 6,0.`
+          : chosen.percentage < 75
+            ? `Atividade rápida de revisão atribuída para consolidar ${chosen.competencyCode}.`
+            : `Aprofundamento estilo ENEM disponível para manter o desempenho.`;
+
+      const reviewText = [
+        `Diagnóstico: ${verdict}`,
+        `Ponto Forte: ${whatWentWell}`,
+        `Onde Errou: ${whereStruggled}`,
+        `Ação da IA: ${recommendation}`,
+      ]
+        .join('\n')
+        .slice(0, 1950);
+
+      return {
+        verdict,
+        whatWentWell,
+        whereStruggled,
+        recommendation,
+        failureRiskAlert,
+        reviewText,
+        engineSource: source,
+      };
+    };
+
+    let examReview: ReturnType<typeof buildDemoExamReview>;
+
+    if (!isGeminiConfigured()) {
+      if (!parsed.demoMode) {
+        throw new Error(
+          'GEMINI_API_KEY não está configurada para revisão de provas no Modo LIVE.'
+        );
+      }
+      examReview = buildDemoExamReview('DEMO_RULES');
+    } else {
+      try {
+        const ReviewSchemaZod = z.object({
+          verdict: z.string().min(4).max(300),
+          whatWentWell: z.string().min(4).max(500),
+          whereStruggled: z.string().min(4).max(500),
+          recommendation: z.string().min(4).max(500),
+        });
+
+        const rawReview = await generateStructuredJson<z.infer<typeof ReviewSchemaZod>>({
+          systemInstruction:
+            'Você é o revisor pedagógico automático de provas do Ensino Médio brasileiro na plataforma EduPulse AI. Analise o resultado da prova usando apenas o código anônimo do estudante, em português do Brasil claro, objetivo e útil para o professor.',
+          prompt: `Faça a revisão automática desta prova do Ensino Médio:
+- Estudante (código): ${chosen.pseudonymId} (${chosen.gradeLevel})
+- Matéria da prova: ${chosen.subjectName}
+- Competência avaliada: ${chosen.competencyCode} — ${chosen.competencyName}
+- Nota da prova: ${gradeTen} / 10 (${chosen.percentage}%)
+- Média geral do aluno: ${(chosen.studentOverallAvg / 10).toFixed(1).replace('.', ',')} / 10
+- Matéria em que o aluno se dá melhor: ${chosen.bestSubjectName || 'Não informada'}
+- Matéria em que o aluno é mais ruim: ${chosen.worstSubjectName || chosen.subjectName}
+- Classificação de risco: ${failureRiskAlert}
+
+Retorne:
+- verdict: resumo direto da situação na prova (1 frase)
+- whatWentWell: onde o aluno foi bem ou o que conseguiu resolver
+- whereStruggled: onde errou ou qual lacuna causou perda de nota
+- recommendation: ação automática de reforço ou avanço para o professor acompanhar`,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              verdict: { type: Type.STRING },
+              whatWentWell: { type: Type.STRING },
+              whereStruggled: { type: Type.STRING },
+              recommendation: { type: Type.STRING },
+            },
+            required: ['verdict', 'whatWentWell', 'whereStruggled', 'recommendation'],
+          },
+        });
+
+        const clean = ReviewSchemaZod.parse(rawReview);
+        const reviewText = [
+          `Diagnóstico: ${clean.verdict}`,
+          `Ponto Forte: ${clean.whatWentWell}`,
+          `Onde Errou: ${clean.whereStruggled}`,
+          `Ação da IA: ${clean.recommendation}`,
+        ]
+          .join('\n')
+          .slice(0, 1950);
+
+        examReview = {
+          ...clean,
+          failureRiskAlert,
+          reviewText,
+          engineSource: 'GEMINI',
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (parsed.demoMode && (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429'))) {
+          examReview = buildDemoExamReview('DEMO_RULES');
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const eventId = `evt_rev_${suffix}`;
+    const idempotencyKey = `idem_rev_${chosen.resultId}_${Math.round(chosen.percentage)}_${suffix}`;
+
+    const out = await this.processEvent({
+      eventId,
+      idempotencyKey,
+      eventType: 'AssessmentSubmitted',
+      institutionId: parsed.institutionId,
+      pseudonymId: chosen.pseudonymId,
+      gradeLevel: chosen.gradeLevel,
+      subjectName: chosen.subjectName,
+      competencyCode: chosen.competencyCode,
+      competencyName: chosen.competencyName,
+      recentScores: chosen.recentScores,
+      latestScore: chosen.percentage,
+      completedActivitiesCount: 1,
+      missedTopics: chosen.percentage < 72 ? [chosen.competencyName] : [],
+      demoMode: parsed.demoMode,
+    });
+
+    return {
+      selectedExam: chosen,
+      selectionReason,
+      examReview,
+      eventId,
+      idempotencyKey,
+      analysis: out.analysis,
+      geminiConfigured: out.geminiConfigured,
     };
   }
 }

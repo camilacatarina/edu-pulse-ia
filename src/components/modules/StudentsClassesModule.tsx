@@ -1,31 +1,41 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, BookPlus, Edit3, Plus, Search, Trash2, UserPlus } from 'lucide-react';
-import { useWorkspace } from '../../context/WorkspaceContext';
-import { PedagogicalStatus, Student } from '../../types/domain';
 import {
-  labelActivityStatus,
-  labelActivityType,
-  labelEngineSource,
-  labelEstimatedLevel,
-  labelModuleStatus,
-  labelPedagogicalStatus,
-} from '../../utils/labels';
+  AlertTriangle,
+  ArrowLeft,
+  BookPlus,
+  Edit3,
+  Plus,
+  Search,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+  UserPlus,
+} from 'lucide-react';
+import { useWorkspace } from '../../context/WorkspaceContext';
+import { Student } from '../../types/domain';
+import {
+  FailureRiskLevel,
+  formatGradeTen,
+  labelRiskLevel,
+  labelRiskShort,
+  parseStructuredExamReview,
+} from '../../utils/pedagogicalAnalytics';
 
 interface StudentsClassesModuleProps {
   selectedStudentId: string | null;
   onSelectStudent: (id: string | null) => void;
 }
 
-function statusStyle(status: PedagogicalStatus): string {
-  switch (status) {
-    case 'Mastering':
-      return 'text-emerald-700';
-    case 'Progressing':
-      return 'text-sky-700';
-    case 'Additional Practice Recommended':
-      return 'text-amber-700';
-    case 'Needs Reinforcement':
+const HIGH_SCHOOL_GRADES = ['1ª Série EM', '2ª Série EM', '3ª Série EM'] as const;
+
+function riskTextColor(level: FailureRiskLevel): string {
+  switch (level) {
+    case 'MAXIMUM':
       return 'text-red-700';
+    case 'MODERATE':
+      return 'text-amber-700';
+    case 'LOW':
+      return 'text-emerald-700';
   }
 }
 
@@ -35,24 +45,37 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
 }) => {
   const {
     dataset,
-    mode,
+    teacherFilter,
+    setTeacherFilter,
+    availableTeachers,
+    scopedStudentProfiles,
+    studentProfiles,
     addClass,
     addSubjectWithCompetency,
     saveStudent,
     removeStudent,
+    recordExamGrade,
     runAutonomousLearningDemo,
     engineProcessing,
   } = useWorkspace();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [classFilter, setClassFilter] = useState<string>('ALL');
+  const [riskFilter, setRiskFilter] = useState<'ALL' | FailureRiskLevel>('ALL');
   const [showClassModal, setShowClassModal] = useState(false);
   const [showSubjectModal, setShowSubjectModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Partial<Student> | null>(null);
 
+  // Quick grade modal inside student profile
+  const [showQuickGrade, setShowQuickGrade] = useState(false);
+  const [qSubjectId, setQSubjectId] = useState('');
+  const [qCompId, setQCompId] = useState('');
+  const [qScoreTen, setQScoreTen] = useState('5.0');
+  const [savingQuickGrade, setSavingQuickGrade] = useState(false);
+
   // Class form state
   const [className, setClassName] = useState('');
-  const [classGrade, setClassGrade] = useState('8º Ano');
+  const [classGrade, setClassGrade] = useState('1ª Série EM');
   const [academicYear, setAcademicYear] = useState('2026');
   const [teacherName, setTeacherName] = useState('');
 
@@ -61,33 +84,35 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
   const [subCode, setSubCode] = useState('');
   const [compCode, setCompCode] = useState('');
   const [compName, setCompName] = useState('');
-  const [compDesc, setCompDesc] = useState('');
+  const [compGrade, setCompGrade] = useState('1ª Série EM');
 
   // Student form state
   const [stuName, setStuName] = useState('');
   const [stuClassId, setStuClassId] = useState('');
-  const [stuGrade, setStuGrade] = useState('8º Ano');
+  const [stuGrade, setStuGrade] = useState('1ª Série EM');
   const [stuOwnerUid, setStuOwnerUid] = useState('');
   const [stuSubjects, setStuSubjects] = useState<string[]>([]);
 
-  const selectedStudent = useMemo(
-    () => dataset.students.find((s) => s.id === selectedStudentId) || null,
-    [dataset.students, selectedStudentId]
+  const selectedProfile = useMemo(
+    () => studentProfiles.find((p) => p.student.id === selectedStudentId) || null,
+    [studentProfiles, selectedStudentId]
   );
 
-  const filteredStudents = useMemo(() => {
+  const filteredProfiles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return dataset.students.filter((s) => {
-      if (classFilter !== 'ALL' && s.classId !== classFilter) return false;
+    return scopedStudentProfiles.filter((p) => {
+      if (classFilter !== 'ALL' && p.student.classId !== classFilter) return false;
+      if (riskFilter !== 'ALL' && p.riskLevel !== riskFilter) return false;
       if (!q) return true;
       return (
-        s.displayName.toLowerCase().includes(q) ||
-        s.pseudonymId.toLowerCase().includes(q) ||
-        labelPedagogicalStatus(s.pedagogicalStatus).toLowerCase().includes(q) ||
-        s.pedagogicalStatus.toLowerCase().includes(q)
+        p.student.displayName.toLowerCase().includes(q) ||
+        p.student.gradeLevel.toLowerCase().includes(q) ||
+        labelRiskShort(p.riskLevel).toLowerCase().includes(q) ||
+        (p.bestSubject?.subject.name.toLowerCase().includes(q) ?? false) ||
+        (p.worstSubject?.subject.name.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [dataset.students, searchQuery, classFilter]);
+  }, [scopedStudentProfiles, searchQuery, classFilter, riskFilter]);
 
   const openStudentForm = (student?: Student) => {
     if (student) {
@@ -101,7 +126,7 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
       setEditingStudent({});
       setStuName('');
       setStuClassId(dataset.classes[0]?.id || '');
-      setStuGrade(dataset.classes[0]?.gradeLevel || '8º Ano');
+      setStuGrade(dataset.classes[0]?.gradeLevel || '1ª Série EM');
       setStuOwnerUid('');
       setStuSubjects(dataset.subjects.map((s) => s.id));
     }
@@ -128,7 +153,7 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
       name: className,
       gradeLevel: classGrade,
       academicYear,
-      teacherName: teacherName || 'Docente Responsável',
+      teacherName: teacherName || 'Professor Responsável',
     });
     setClassName('');
     setTeacherName('');
@@ -143,43 +168,50 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
       subjectCode: subCode,
       competencyCode: compCode || `${subCode.toUpperCase()}-1`,
       competencyName: compName,
-      description: compDesc || `Critério essencial de aprendizagem em ${subName}.`,
-      gradeLevel: '8º Ano',
+      description: `Competência de ${subName} para ${compGrade}.`,
+      gradeLevel: compGrade,
     });
     setSubName('');
     setSubCode('');
     setCompCode('');
     setCompName('');
-    setCompDesc('');
     setShowSubjectModal(false);
   };
 
-  // Individual Student Profile View
-  if (selectedStudent) {
+  // Boletim Individual Completo do Aluno
+  if (selectedProfile) {
+    const selectedStudent = selectedProfile.student;
     const cls = dataset.classes.find((c) => c.id === selectedStudent.classId);
-    const stuResults = dataset.assessmentResults.filter((r) => r.studentId === selectedStudent.id);
-    const stuActivities = dataset.activities.filter((a) => a.studentId === selectedStudent.id);
-    const stuPaths = dataset.learningPaths.filter((p) => p.studentId === selectedStudent.id);
-    const stuInsights = dataset.aiInsights.filter((i) => i.studentId === selectedStudent.id);
-    const stuInterventions = dataset.interventions.filter((i) => i.studentId === selectedStudent.id);
+    const stuResults = [...dataset.assessmentResults]
+      .filter((r) => r.studentId === selectedStudent.id)
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 
-    const subjectBreakdown = dataset.subjects.map((sub) => {
-      const res = stuResults.filter((r) => r.subjectId === sub.id);
-      const avg =
-        res.length > 0
-          ? Math.round((res.reduce((a, b) => a + b.percentage, 0) / res.length) * 10) / 10
-          : selectedStudent.averageScore;
-      return { subject: sub, avg, observations: res.length };
-    });
+    const openProfileGradeModal = () => {
+      const subId = selectedProfile.worstSubject?.subject.id || dataset.subjects[0]?.id || '';
+      const comp = dataset.competencies.find((c) => c.subjectId === subId) || dataset.competencies[0];
+      setQSubjectId(subId);
+      setQCompId(comp?.id || '');
+      setQScoreTen('5.5');
+      setShowQuickGrade(true);
+    };
 
-    const competencyBreakdown = dataset.competencies.map((comp) => {
-      const res = stuResults.filter((r) => r.competencyId === comp.id);
-      const avg =
-        res.length > 0
-          ? Math.round((res.reduce((a, b) => a + b.percentage, 0) / res.length) * 10) / 10
-          : null;
-      return { comp, avg, count: res.length };
-    });
+    const handleQuickGradeSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      const val = Number(qScoreTen.replace(',', '.'));
+      if (Number.isNaN(val) || !qSubjectId || !qCompId) return;
+      setSavingQuickGrade(true);
+      try {
+        await recordExamGrade({
+          studentId: selectedStudent.id,
+          subjectId: qSubjectId,
+          competencyId: qCompId,
+          percentage: Math.min(100, Math.max(0, Math.round(val * 10))),
+        });
+        setShowQuickGrade(false);
+      } finally {
+        setSavingQuickGrade(false);
+      }
+    };
 
     return (
       <div className="space-y-6">
@@ -191,196 +223,310 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Todos os Estudantes
+              Voltar
             </button>
             <div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="font-mono font-semibold text-slate-800">{selectedStudent.pseudonymId}</span>
-                <span>·</span>
-                <span>{cls?.name || 'Turma não atribuída'}</span>
-                <span>·</span>
-                <span>{selectedStudent.gradeLevel}</span>
-                {mode === 'DEMO' && (
-                  <>
-                    <span>·</span>
-                    <span>DADOS DEMO</span>
-                  </>
-                )}
-              </div>
+              <p className="text-xs text-slate-500">
+                {cls?.name || selectedStudent.gradeLevel} · {cls?.teacherName || 'Ensino Médio'}
+              </p>
               <h1 className="text-2xl font-bold text-slate-900 mt-0.5">
-                Perfil do Estudante: {selectedStudent.displayName}
+                {selectedStudent.displayName}
               </h1>
             </div>
           </div>
 
-          <button
-            type="button"
-            disabled={engineProcessing}
-            onClick={() => runAutonomousLearningDemo(selectedStudent.id)}
-            className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
-          >
-            {engineProcessing ? 'Processando Evento...' : 'Simular Novo Evento de Atividade'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openProfileGradeModal}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Lançar Nota de Prova
+            </button>
+            <button
+              type="button"
+              disabled={engineProcessing}
+              onClick={() => runAutonomousLearningDemo(selectedStudent.id)}
+              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap"
+            >
+              {engineProcessing ? 'Atualizando IA...' : 'Atualizar Reforço com IA'}
+            </button>
+          </div>
         </div>
 
-        {/* Visão Geral de Desempenho */}
+        {/* Risco de Reprovação + Melhor Matéria + Pior Matéria */}
         <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5">
-            <p className="text-xs text-slate-500">Status Pedagógico</p>
-            <p className={`text-base font-semibold mt-2 ${statusStyle(selectedStudent.pedagogicalStatus)}`}>
-              {labelPedagogicalStatus(selectedStudent.pedagogicalStatus)}
+            <p className="text-xs text-slate-500">Média Geral</p>
+            <p
+              className={`text-2xl font-bold font-mono tabular-nums mt-1.5 ${
+                selectedProfile.overallAverage < 60
+                  ? 'text-red-700'
+                  : selectedProfile.overallAverage < 70
+                    ? 'text-amber-700'
+                    : 'text-slate-900'
+              }`}
+            >
+              {formatGradeTen(selectedProfile.overallAverage)}{' '}
+              <span className="text-sm font-normal text-slate-400">/ 10</span>
+            </p>
+            <p className="text-xs text-slate-500 mt-1">{selectedProfile.overallAverage}% de aproveitamento</p>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-500">Risco de Reprovação</p>
+              {selectedProfile.riskLevel === 'MAXIMUM' && (
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              )}
+            </div>
+            <p className={`text-sm font-bold mt-2 ${riskTextColor(selectedProfile.riskLevel)}`}>
+              {labelRiskLevel(selectedProfile.riskLevel)}
+            </p>
+            <p className="text-xs text-slate-500 mt-1 line-clamp-2">{selectedProfile.riskReason}</p>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-500">Onde se dá Melhor</p>
+              <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
+            </div>
+            <p className="text-base font-bold text-slate-900 mt-1.5">
+              {selectedProfile.bestSubject?.subject.name || '—'}
+            </p>
+            <p className="text-xs font-mono font-semibold text-emerald-700 mt-1">
+              {selectedProfile.bestSubject
+                ? `Média ${formatGradeTen(selectedProfile.bestSubject.average)} (${selectedProfile.bestSubject.average}%)`
+                : 'Sem notas'}
             </p>
           </div>
+
           <div className="bg-white border border-slate-200 rounded-xl p-5">
-            <p className="text-xs text-slate-500">Visão Geral de Desempenho</p>
-            <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">
-              {selectedStudent.averageScore}%
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-500">Onde é Mais Ruim</p>
+              <TrendingDown className="w-4 h-4 text-red-600 shrink-0" />
+            </div>
+            <p className="text-base font-bold text-slate-900 mt-1.5">
+              {selectedProfile.worstSubject?.subject.name || '—'}
             </p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
-            <p className="text-xs text-slate-500">Conclusão de Atividades</p>
-            <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">
-              {selectedStudent.completionRate}%
-            </p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
-            <p className="text-xs text-slate-500">Intervenções Ativas</p>
-            <p className="text-2xl font-bold text-sky-700 tabular-nums mt-1">
-              {stuInterventions.length}
+            <p className="text-xs font-mono font-semibold text-red-700 mt-1">
+              {selectedProfile.worstSubject
+                ? `Média ${formatGradeTen(selectedProfile.worstSubject.average)} (${selectedProfile.worstSubject.average}%)`
+                : 'Sem notas'}
             </p>
           </div>
         </section>
 
-        {/* Evolução por Disciplina & Mapa de Competências */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <section className="bg-white border border-slate-200 rounded-xl p-6">
-            <h2 className="text-base font-semibold text-slate-900">Evolução por Disciplina</h2>
-            <p className="text-xs text-slate-500 mt-0.5 mb-4">
-              Média de desempenho calculada em atividades formativas e diagnósticas
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Médias por Matéria */}
+          <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6">
+            <h2 className="text-base font-semibold text-slate-900 mb-1">
+              Notas e Médias por Matéria
+            </h2>
+            <p className="text-xs text-slate-500 mb-5">
+              Ordenado da matéria com maior dificuldade para a mais forte
             </p>
+
             <div className="space-y-4">
-              {subjectBreakdown.map(({ subject, avg, observations }) => (
-                <div key={subject.id}>
-                  <div className="flex items-center justify-between text-sm mb-1.5">
-                    <span className="font-medium text-slate-800">
-                      {subject.name}{' '}
-                      <span className="text-xs text-slate-400 font-normal">
-                        ({observations} obs.)
-                      </span>
-                    </span>
-                    <span className="font-mono font-semibold tabular-nums text-slate-900">{avg}%</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${avg >= 80 ? 'bg-emerald-600' : avg >= 70 ? 'bg-sky-600' : 'bg-amber-600'}`}
-                      style={{ width: `${Math.min(100, Math.max(4, avg))}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="bg-white border border-slate-200 rounded-xl p-6">
-            <h2 className="text-base font-semibold text-slate-900">Mapa de Competências</h2>
-            <p className="text-xs text-slate-500 mt-0.5 mb-4">
-              Domínio observado por padrão curricular de aprendizagem
-            </p>
-            <div className="divide-y divide-slate-100">
-              {competencyBreakdown.slice(0, 6).map(({ comp, avg, count }) => (
-                <div key={comp.id} className="py-2.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs font-mono text-slate-500">{comp.code}</p>
-                    <p className="text-sm font-medium text-slate-800 truncate">{comp.name}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    {avg !== null ? (
-                      <span className={`text-sm font-mono font-semibold tabular-nums ${avg >= 80 ? 'text-emerald-700' : avg >= 70 ? 'text-sky-700' : 'text-amber-700'}`}>
-                        {avg}%
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">Dados insuficientes ({count})</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        {/* Jornada de Aprendizagem & Recomendações da IA */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <section className="bg-white border border-slate-200 rounded-xl p-6">
-            <h2 className="text-base font-semibold text-slate-900">Jornada de Aprendizagem</h2>
-            <p className="text-xs text-slate-500 mt-0.5 mb-4">
-              Trilhas adaptativas de aprendizagem e módulos sequenciados
-            </p>
-            {stuPaths.length === 0 ? (
-              <p className="text-sm text-slate-500">Nenhuma trilha adaptativa atribuída até o momento.</p>
-            ) : (
-              <div className="space-y-4">
-                {stuPaths.map((path) => (
-                  <div key={path.id} className="border border-slate-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-slate-900">{path.title}</h3>
-                      <span className="text-xs font-mono font-semibold text-sky-700">
-                        {labelEstimatedLevel(path.estimatedLevel)} · {path.progressPercent}%
+              {[...selectedProfile.subjectPerformances]
+                .sort((a, b) => a.average - b.average)
+                .map((sp) => (
+                  <div key={sp.subject.id}>
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <div>
+                        <span className="font-medium text-slate-900">{sp.subject.name}</span>
+                        <span className="text-xs text-slate-400 ml-2">
+                          ({sp.examsCount} {sp.examsCount === 1 ? 'prova' : 'provas'})
+                        </span>
+                      </div>
+                      <span
+                        className={`font-mono font-bold tabular-nums ${
+                          sp.isFailing
+                            ? 'text-red-700'
+                            : sp.isNearRisk
+                              ? 'text-amber-700'
+                              : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatGradeTen(sp.average)}{' '}
+                        <span className="text-xs font-normal text-slate-400">({sp.average}%)</span>
                       </span>
                     </div>
-                    <p className="text-xs text-slate-600 mt-1">{path.educationalObjective}</p>
-                    <div className="mt-3 space-y-1.5">
-                      {path.modules.map((m) => (
-                        <div key={m.order} className="flex items-center justify-between text-xs">
-                          <span className="text-slate-700">
-                            {m.order}. {m.title}
-                          </span>
-                          <span className={`font-medium ${m.status === 'COMPLETED' ? 'text-emerald-700' : m.status === 'IN_PROGRESS' ? 'text-sky-700' : 'text-slate-400'}`}>
-                            {labelModuleStatus(m.status)}
-                          </span>
-                        </div>
-                      ))}
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          sp.isFailing
+                            ? 'bg-red-600'
+                            : sp.isNearRisk
+                              ? 'bg-amber-500'
+                              : 'bg-emerald-600'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(4, sp.average))}%` }}
+                      />
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
+            </div>
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-xl p-6">
-            <h2 className="text-base font-semibold text-slate-900">Recomendações da IA e Atividades Realizadas</h2>
-            <p className="text-xs text-slate-500 mt-0.5 mb-4">
-              Recomendações proativas geradas a partir de evidências pseudonimizadas
-            </p>
-            <div className="space-y-3">
-              {stuInsights.map((ins) => (
-                <div key={ins.id} className="border border-slate-200 rounded-lg p-3.5">
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>{ins.strategyChosen}</span>
-                    <span className="font-mono">{labelEngineSource(ins.engineSource)}</span>
+          {/* Revisões de Provas feitas pela IA */}
+          <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">
+                Provas e Revisões Automáticas da IA
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                A IA analisa automaticamente cada prova indicando acertos, erros e ação recomendada.
+              </p>
+            </div>
+
+            <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
+              {stuResults.map((res) => {
+                const sub = dataset.subjects.find((s) => s.id === res.subjectId);
+                const comp = dataset.competencies.find((c) => c.id === res.competencyId);
+                const parsed = parseStructuredExamReview(res.aiPreliminaryFeedback);
+
+                return (
+                  <div key={res.id} className="border border-slate-200 rounded-lg p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {sub?.name} — {comp?.name || 'Avaliação'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Data: {res.submittedAt.slice(0, 10)} ·{' '}
+                          {parsed ? 'Revisada pela IA' : 'Aguardando ciclo da IA'}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-base font-bold font-mono tabular-nums shrink-0 ${
+                          res.percentage < 60
+                            ? 'text-red-700'
+                            : res.percentage < 70
+                              ? 'text-amber-700'
+                              : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatGradeTen(res.percentage)}
+                      </span>
+                    </div>
+
+                    {parsed ? (
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
+                        <p className="font-semibold text-slate-900">{parsed.verdict}</p>
+                        {parsed.whatWentWell && (
+                          <p className="text-emerald-800">
+                            <span className="font-semibold">Onde foi bem:</span> {parsed.whatWentWell}
+                          </p>
+                        )}
+                        {parsed.whereStruggled && (
+                          <p className="text-red-800">
+                            <span className="font-semibold">Onde errou:</span> {parsed.whereStruggled}
+                          </p>
+                        )}
+                        {parsed.recommendation && (
+                          <p className="text-sky-800">
+                            <span className="font-semibold">Ação da IA:</span> {parsed.recommendation}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 italic">
+                        A IA fará a revisão desta prova automaticamente no próximo ciclo.
+                      </p>
+                    )}
                   </div>
-                  <p className="text-sm text-slate-800 mt-1">{ins.pedagogicalDiagnosis}</p>
-                  <p className="text-xs text-sky-700 mt-1">Objetivo: {ins.learningObjective}</p>
-                </div>
-              ))}
-              {stuActivities.map((act) => (
-                <div key={act.id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 text-sm">
-                  <div className="min-w-0">
-                    <p className="font-medium text-slate-800 truncate">{act.title}</p>
-                    <p className="text-xs text-slate-500">
-                      {labelActivityType(act.type)} · {act.origin === 'AI_AUTONOMOUS' ? 'IA Autônoma' : 'Docente'}
-                    </p>
-                  </div>
-                  <span className={`text-xs font-mono font-semibold shrink-0 ${act.status === 'COMPLETED' ? 'text-emerald-700' : 'text-sky-700'}`}>
-                    {act.status === 'COMPLETED' ? `${act.scorePercentage ?? 0}% CONCLUÍDA` : labelActivityStatus(act.status)}
-                  </span>
-                </div>
-              ))}
-              {stuInsights.length === 0 && stuActivities.length === 0 && (
-                <p className="text-sm text-slate-500">Nenhuma recomendação ou atividade registrada até o momento.</p>
+                );
+              })}
+
+              {stuResults.length === 0 && (
+                <p className="text-xs text-slate-500 py-6 text-center">
+                  Nenhuma prova registrada para este aluno ainda.
+                </p>
               )}
             </div>
           </section>
         </div>
+
+        {/* Modal Lançar Nota no Perfil */}
+        {showQuickGrade && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+            <form
+              onSubmit={handleQuickGradeSubmit}
+              className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4"
+            >
+              <h3 className="text-lg font-semibold text-slate-900">
+                Lançar Nota · {selectedStudent.displayName}
+              </h3>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Matéria</label>
+                <select
+                  value={qSubjectId}
+                  onChange={(e) => {
+                    setQSubjectId(e.target.value);
+                    const first = dataset.competencies.find((c) => c.subjectId === e.target.value);
+                    if (first) setQCompId(first.id);
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  {dataset.subjects.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Competência / Tema</label>
+                <select
+                  value={qCompId}
+                  onChange={(e) => setQCompId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  {dataset.competencies
+                    .filter((c) => c.subjectId === qSubjectId)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Nota da Prova (0,0 a 10,0)
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="10"
+                  required
+                  value={qScoreTen}
+                  onChange={(e) => setQScoreTen(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickGrade(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingQuickGrade}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg"
+                >
+                  {savingQuickGrade ? 'Revisando com IA...' : 'Salvar e Revisar com IA'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </div>
     );
   }
@@ -389,25 +535,37 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-5 border-b border-slate-200">
         <div>
-          <p className="text-xs font-medium text-slate-500">
-            {mode === 'DEMO' ? 'DADOS DEMO · 5 Turmas · 60 Estudantes' : 'ELENCO AO VIVO NO FIRESTORE'}
-          </p>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-            Estudantes e Turmas
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Médias, Notas e Matérias por Aluno
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Gerencie turmas institucionais, disciplinas curriculares, matrículas e perfis pedagógicos individuais.
+            Visualize a média geral, notas por disciplina e onde cada estudante se dá melhor ou pior.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {availableTeachers.length > 0 && (
+            <select
+              aria-label="Filtrar por professor"
+              value={teacherFilter}
+              onChange={(e) => setTeacherFilter(e.target.value)}
+              className="px-3 py-2 text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded-lg"
+            >
+              <option value="ALL">Todos os Professores</option>
+              {availableTeachers.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             onClick={() => setShowSubjectModal(true)}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 whitespace-nowrap"
           >
             <BookPlus className="w-3.5 h-3.5" />
-            Adicionar Disciplina
+            Nova Matéria
           </button>
           <button
             type="button"
@@ -415,7 +573,7 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 whitespace-nowrap"
           >
             <Plus className="w-3.5 h-3.5" />
-            Criar Turma
+            Nova Turma
           </button>
           <button
             type="button"
@@ -424,58 +582,39 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
           >
             <UserPlus className="w-3.5 h-3.5" />
-            Matricular Estudante
+            Matricular Aluno
           </button>
         </div>
       </div>
 
-      {/* Faixa de Turmas */}
-      <section>
-        <h2 className="text-sm font-semibold text-slate-800 mb-3">
-          Turmas ({dataset.classes.length}) · Disciplinas ({dataset.subjects.length})
-        </h2>
-        {dataset.classes.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 text-center">
-            <p className="text-sm text-slate-600">Nenhuma turma criada ainda neste ambiente.</p>
-            <button
-              type="button"
-              onClick={() => setShowClassModal(true)}
-              className="mt-3 px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg"
-            >
-              Criar Primeira Turma
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {dataset.classes.map((cls) => {
-              const count = dataset.students.filter((s) => s.classId === cls.id).length;
-              const active = classFilter === cls.id;
-              return (
-                <button
-                  key={cls.id}
-                  type="button"
-                  onClick={() => setClassFilter(active ? 'ALL' : cls.id)}
-                  className={`text-left p-4 rounded-xl border transition-colors ${
-                    active
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-900 border-slate-200 hover:border-sky-300'
-                  }`}
-                >
-                  <p className="text-sm font-semibold truncate">{cls.name}</p>
-                  <p className={`text-xs mt-1 ${active ? 'text-slate-300' : 'text-slate-500'}`}>
-                    {cls.gradeLevel} · {count} estudantes
-                  </p>
-                  <p className={`text-xs mt-0.5 truncate ${active ? 'text-slate-400' : 'text-slate-400'}`}>
-                    {cls.teacherName || 'Corpo Docente'}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {/* Turmas do Ensino Médio */}
+      {dataset.classes.length > 0 && (
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {dataset.classes.map((cls) => {
+            const count = scopedStudentProfiles.filter((p) => p.student.classId === cls.id).length;
+            const active = classFilter === cls.id;
+            return (
+              <button
+                key={cls.id}
+                type="button"
+                onClick={() => setClassFilter(active ? 'ALL' : cls.id)}
+                className={`text-left p-4 rounded-xl border transition-colors ${
+                  active
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-900 border-slate-200 hover:border-sky-300'
+                }`}
+              >
+                <p className="text-sm font-semibold truncate">{cls.name}</p>
+                <p className={`text-xs mt-1 ${active ? 'text-slate-300' : 'text-slate-500'}`}>
+                  {cls.teacherName || cls.gradeLevel} · {count} estudantes
+                </p>
+              </button>
+            );
+          })}
+        </section>
+      )}
 
-      {/* Barra de Busca e Filtro */}
+      {/* Busca e Filtro de Risco */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="relative max-w-md w-full">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -483,72 +622,135 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por nome do estudante, pseudônimo ou status..."
+            placeholder="Buscar aluno, série ou matéria forte/fraca..."
             className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-sky-500"
           />
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-600">
-          <span>Exibindo {filteredStudents.length} estudantes</span>
-          {classFilter !== 'ALL' && (
+
+        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+          {(['ALL', 'MAXIMUM', 'MODERATE', 'LOW'] as const).map((lvl) => (
             <button
+              key={lvl}
               type="button"
-              onClick={() => setClassFilter('ALL')}
-              className="text-sky-700 font-medium hover:underline"
+              onClick={() => setRiskFilter(lvl)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap ${
+                riskFilter === lvl ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
             >
-              Limpar filtro de turma
+              {lvl === 'ALL'
+                ? 'Todos'
+                : lvl === 'MAXIMUM'
+                  ? 'Risco Máximo'
+                  : lvl === 'MODERATE'
+                    ? 'Atenção'
+                    : 'Regulares'}
             </button>
-          )}
+          ))}
         </div>
       </div>
 
-      {/* Tabela de Estudantes */}
+      {/* Tabela Boletim Completo */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                <th className="py-3 px-4">Pseudônimo</th>
-                <th className="py-3 px-4">Estudante</th>
-                <th className="py-3 px-4">Turma</th>
-                <th className="py-3 px-4">Status Pedagógico</th>
-                <th className="py-3 px-4 text-right">Nota Média</th>
-                <th className="py-3 px-4 text-right">Conclusão</th>
+                <th className="py-3 px-4">Aluno</th>
+                <th className="py-3 px-4 text-right">Média</th>
+                <th className="py-3 px-4">Risco</th>
+                <th className="py-3 px-4">Melhor Matéria</th>
+                <th className="py-3 px-4">Pior Matéria</th>
+                {dataset.subjects.slice(0, 5).map((sub) => (
+                  <th key={sub.id} className="py-3 px-2.5 text-right font-mono">
+                    {sub.code}
+                  </th>
+                ))}
                 <th className="py-3 px-4 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
-              {filteredStudents.map((stu) => {
+              {filteredProfiles.map((profile) => {
+                const stu = profile.student;
                 const cls = dataset.classes.find((c) => c.id === stu.classId);
+
                 return (
                   <tr key={stu.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-2.5 px-4 font-mono text-xs text-slate-600">{stu.pseudonymId}</td>
                     <td className="py-2.5 px-4">
                       <button
                         type="button"
                         onClick={() => onSelectStudent(stu.id)}
-                        className="font-medium text-slate-900 hover:text-sky-700 text-left"
+                        className="font-semibold text-slate-900 hover:text-sky-700 text-left block"
                       >
                         {stu.displayName}
                       </button>
+                      <span className="text-xs text-slate-500">{cls?.name || stu.gradeLevel}</span>
                     </td>
-                    <td className="py-2.5 px-4 text-xs text-slate-600">{cls?.name || stu.gradeLevel}</td>
-                    <td className={`py-2.5 px-4 text-xs font-semibold ${statusStyle(stu.pedagogicalStatus)}`}>
-                      {labelPedagogicalStatus(stu.pedagogicalStatus)}
+                    <td className="py-2.5 px-4 text-right font-mono font-bold tabular-nums">
+                      <span
+                        className={
+                          profile.overallAverage < 60
+                            ? 'text-red-700'
+                            : profile.overallAverage < 70
+                              ? 'text-amber-700'
+                              : 'text-slate-900'
+                        }
+                      >
+                        {formatGradeTen(profile.overallAverage)}
+                      </span>
                     </td>
-                    <td className="py-2.5 px-4 text-right font-mono tabular-nums text-slate-900">
-                      {stu.averageScore}%
+                    <td className={`py-2.5 px-4 text-xs font-semibold whitespace-nowrap ${riskTextColor(profile.riskLevel)}`}>
+                      {labelRiskShort(profile.riskLevel)}
                     </td>
-                    <td className="py-2.5 px-4 text-right font-mono tabular-nums text-slate-700">
-                      {stu.completionRate}%
+                    <td className="py-2.5 px-4 text-xs">
+                      {profile.bestSubject ? (
+                        <span className="text-emerald-800 font-medium">
+                          {profile.bestSubject.subject.code}{' '}
+                          <span className="font-mono tabular-nums">
+                            ({formatGradeTen(profile.bestSubject.average)})
+                          </span>
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </td>
+                    <td className="py-2.5 px-4 text-xs">
+                      {profile.worstSubject ? (
+                        <span className="text-red-700 font-medium">
+                          {profile.worstSubject.subject.code}{' '}
+                          <span className="font-mono tabular-nums">
+                            ({formatGradeTen(profile.worstSubject.average)})
+                          </span>
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    {dataset.subjects.slice(0, 5).map((sub) => {
+                      const sp = profile.subjectPerformances.find((s) => s.subject.id === sub.id);
+                      const avg = sp?.average ?? stu.averageScore;
+                      return (
+                        <td
+                          key={sub.id}
+                          className={`py-2.5 px-2.5 text-right font-mono text-xs tabular-nums ${
+                            avg < 60
+                              ? 'text-red-700 font-bold'
+                              : avg < 70
+                                ? 'text-amber-700 font-semibold'
+                                : 'text-slate-700'
+                          }`}
+                        >
+                          {formatGradeTen(avg)}
+                        </td>
+                      );
+                    })}
                     <td className="py-2.5 px-4 text-right">
-                      <div className="inline-flex items-center gap-2">
+                      <div className="inline-flex items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => onSelectStudent(stu.id)}
-                          className="text-xs font-medium text-sky-700 hover:text-sky-800"
+                          className="text-xs font-medium text-sky-700 hover:underline whitespace-nowrap"
                         >
-                          Perfil
+                          Boletim
                         </button>
                         <button
                           type="button"
@@ -571,10 +773,11 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
                   </tr>
                 );
               })}
-              {filteredStudents.length === 0 && (
+
+              {filteredProfiles.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-sm text-slate-500">
-                    Nenhum estudante corresponde ao filtro atual.
+                  <td colSpan={11} className="py-10 text-center text-sm text-slate-500">
+                    Nenhum estudante encontrado para os filtros aplicados.
                   </td>
                 </tr>
               )}
@@ -587,26 +790,29 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
       {showClassModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
           <form onSubmit={handleAddClass} className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4">
-            <h3 className="text-lg font-semibold text-slate-900">Criar Turma</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Nova Turma do Ensino Médio</h3>
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">Nome da Turma</label>
               <input
                 required
                 value={className}
                 onChange={(e) => setClassName(e.target.value)}
-                placeholder="ex.: 8º C — Matemática Aplicada"
+                placeholder="ex.: 1ª Série B"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Série / Ano</label>
-                <input
-                  required
+                <label className="block text-xs font-medium text-slate-700 mb-1">Série</label>
+                <select
                   value={classGrade}
                   onChange={(e) => setClassGrade(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
-                />
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  {HIGH_SCHOOL_GRADES.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Ano Letivo</label>
@@ -623,7 +829,7 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
               <input
                 value={teacherName}
                 onChange={(e) => setTeacherName(e.target.value)}
-                placeholder="ex.: Profa. Elena Martins"
+                placeholder="ex.: Profª. Elena Martins"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
               />
             </div>
@@ -646,61 +852,63 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
         </div>
       )}
 
-      {/* Modal Adicionar Disciplina e Competência */}
+      {/* Modal Nova Disciplina */}
       {showSubjectModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
           <form onSubmit={handleAddSubject} className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4">
-            <h3 className="text-lg font-semibold text-slate-900">Cadastrar Disciplina e Competência</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Nova Matéria e Competência</h3>
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-slate-700 mb-1">Nome da Disciplina</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Matéria</label>
                 <input
                   required
                   value={subName}
                   onChange={(e) => setSubName(e.target.value)}
-                  placeholder="ex.: Química"
+                  placeholder="ex.: História"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Código</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Sigla</label>
                 <input
                   required
                   value={subCode}
                   onChange={(e) => setSubCode(e.target.value)}
-                  placeholder="QUIM"
+                  placeholder="HIST"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
                 />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Cód. Comp.</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Série</label>
+                <select
+                  value={compGrade}
+                  onChange={(e) => setCompGrade(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  {HIGH_SCHOOL_GRADES.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Código</label>
                 <input
                   value={compCode}
                   onChange={(e) => setCompCode(e.target.value)}
-                  placeholder="QUIM-1"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-slate-700 mb-1">Competência Principal</label>
-                <input
-                  required
-                  value={compName}
-                  onChange={(e) => setCompName(e.target.value)}
-                  placeholder="Balanceamento Estequiométrico"
+                  placeholder="HIST-BR"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">Descrição</label>
-              <textarea
-                rows={2}
-                value={compDesc}
-                onChange={(e) => setCompDesc(e.target.value)}
-                placeholder="Critérios do padrão de aprendizagem..."
+              <label className="block text-xs font-medium text-slate-700 mb-1">Tema / Competência</label>
+              <input
+                required
+                value={compName}
+                onChange={(e) => setCompName(e.target.value)}
+                placeholder="ex.: Brasil República e Cidadania"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
               />
             </div>
@@ -716,29 +924,27 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
                 type="submit"
                 className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800"
               >
-                Salvar Disciplina
+                Salvar
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Modal Matricular / Editar Estudante */}
+      {/* Modal Matricular / Editar Aluno */}
       {editingStudent && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
           <form onSubmit={handleSaveStudent} className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4">
             <h3 className="text-lg font-semibold text-slate-900">
-              {editingStudent.id ? 'Editar Matrícula de Estudante' : 'Matricular Estudante'}
+              {editingStudent.id ? 'Editar Aluno' : 'Matricular Aluno'}
             </h3>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Nome de Exibição do Estudante (ou Pseudônimo Autorizado)
-              </label>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nome do Aluno</label>
               <input
                 required
                 value={stuName}
                 onChange={(e) => setStuName(e.target.value)}
-                placeholder="ex.: Marina A."
+                placeholder="ex.: Marina Almeida"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
               />
             </div>
@@ -748,7 +954,11 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
                 <select
                   required
                   value={stuClassId}
-                  onChange={(e) => setStuClassId(e.target.value)}
+                  onChange={(e) => {
+                    setStuClassId(e.target.value);
+                    const cls = dataset.classes.find((c) => c.id === e.target.value);
+                    if (cls) setStuGrade(cls.gradeLevel);
+                  }}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
                 >
                   {dataset.classes.map((c) => (
@@ -759,23 +969,26 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Série / Ano</label>
-                <input
-                  required
+                <label className="block text-xs font-medium text-slate-700 mb-1">Série</label>
+                <select
                   value={stuGrade}
                   onChange={(e) => setStuGrade(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
-                />
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  {HIGH_SCHOOL_GRADES.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Firebase UID do Estudante Vinculado (Opcional para acesso ao Portal)
+                Código da Conta do Aluno (Opcional)
               </label>
               <input
                 value={stuOwnerUid}
                 onChange={(e) => setStuOwnerUid(e.target.value)}
-                placeholder="Deixe em branco até o estudante vincular a conta"
+                placeholder="Opcional: UID do login Google do aluno"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono text-xs"
               />
             </div>
@@ -791,7 +1004,7 @@ export const StudentsClassesModule: React.FC<StudentsClassesModuleProps> = ({
                 type="submit"
                 className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800"
               >
-                Salvar Estudante
+                Salvar
               </button>
             </div>
           </form>
