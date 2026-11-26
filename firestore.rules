@@ -1,0 +1,682 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Primitive Helpers (Phase 3)
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'camilacatarina2003@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidIsoTimestamp(ts) {
+      return ts is string && ts.size() >= 10 && ts.size() <= 40;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isStaffMember(staffUids) {
+      return isVerifiedUser() && (staffUids is list) && (request.auth.uid in staffUids);
+    }
+
+    function isStudentOwner(ownerUid) {
+      return isVerifiedUser() && (ownerUid is string) && ownerUid.size() > 0 && ownerUid == request.auth.uid;
+    }
+
+    function isValidStaffList(staffUids) {
+      return staffUids is list && staffUids.size() >= 1 && staffUids.size() <= 50 && staffUids[0] is string && staffUids[0].size() <= 128;
+    }
+
+    function isInstitutionStaff(institutionId) {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/institutions/$(institutionId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/institutions/$(institutionId)).data.staffUids
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints (Anti-Update-Gap)
+    // -------------------------------------------------------------------------
+    function isValidInstitution(data) {
+      return data.keys().hasAll(['id', 'name', 'joinCode', 'ownerUid', 'staffUids', 'retentionDays', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'name', 'joinCode', 'ownerUid', 'staffUids', 'retentionDays', 'createdAt']) &&
+             isValidId(data.id) &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 140 &&
+             data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 24 && data.joinCode.matches('^[A-Z0-9_\\-]+$') &&
+             isValidId(data.ownerUid) &&
+             isValidStaffList(data.staffUids) &&
+             data.retentionDays is int && data.retentionDays >= 30 && data.retentionDays <= 1825 &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidInstitutionDirectory(data) {
+      return data.keys().hasAll(['joinCode', 'institutionId', 'name', 'ownerUid', 'createdAt']) &&
+             data.keys().hasOnly(['joinCode', 'institutionId', 'name', 'ownerUid', 'createdAt']) &&
+             data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 24 && data.joinCode.matches('^[A-Z0-9_\\-]+$') &&
+             isValidId(data.institutionId) &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 140 &&
+             isValidId(data.ownerUid) &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'institutionId', 'role', 'displayName', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['uid', 'institutionId', 'role', 'displayName', 'linkedStudentId', 'createdAt', 'updatedAt']) &&
+             isValidId(data.uid) &&
+             isValidId(data.institutionId) &&
+             data.role in ['ADMIN', 'TEACHER', 'STUDENT'] &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+             (!('linkedStudentId' in data) || (data.linkedStudentId is string && data.linkedStudentId.size() <= 128)) &&
+             isValidIsoTimestamp(data.createdAt) &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidUserPrivateInfo(data) {
+      return data.keys().hasAll(['uid', 'email', 'institutionId', 'updatedAt']) &&
+             data.keys().hasOnly(['uid', 'email', 'institutionId', 'updatedAt']) &&
+             isValidId(data.uid) &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+             isValidId(data.institutionId) &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidSchoolClass(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'name', 'gradeLevel', 'academicYear', 'teacherUid', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'name', 'gradeLevel', 'academicYear', 'teacherUid', 'teacherName', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.gradeLevel is string && data.gradeLevel.size() >= 1 && data.gradeLevel.size() <= 40 &&
+             data.academicYear is string && data.academicYear.size() >= 4 && data.academicYear.size() <= 20 &&
+             isValidId(data.teacherUid) &&
+             (!('teacherName' in data) || (data.teacherName is string && data.teacherName.size() <= 120)) &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'classId', 'pseudonymId', 'displayName', 'gradeLevel', 'pedagogicalStatus', 'averageScore', 'completionRate', 'subjectIds', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'classId', 'pseudonymId', 'displayName', 'gradeLevel', 'pedagogicalStatus', 'averageScore', 'completionRate', 'subjectIds', 'createdAt', 'updatedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             isValidId(data.classId) &&
+             data.pseudonymId is string && data.pseudonymId.size() >= 4 && data.pseudonymId.size() <= 64 && data.pseudonymId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+             data.gradeLevel is string && data.gradeLevel.size() >= 1 && data.gradeLevel.size() <= 40 &&
+             data.pedagogicalStatus in ['Mastering', 'Progressing', 'Needs Reinforcement', 'Additional Practice Recommended'] &&
+             data.averageScore is number && data.averageScore >= 0 && data.averageScore <= 100 &&
+             data.completionRate is number && data.completionRate >= 0 && data.completionRate <= 100 &&
+             data.subjectIds is list && data.subjectIds.size() <= 20 &&
+             isValidIsoTimestamp(data.createdAt) &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'name', 'code', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'name', 'code', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.code is string && data.code.size() >= 2 && data.code.size() <= 24 &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidCompetency(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'subjectId', 'code', 'name', 'description', 'gradeLevel', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'subjectId', 'code', 'name', 'description', 'gradeLevel', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             isValidId(data.subjectId) &&
+             data.code is string && data.code.size() >= 2 && data.code.size() <= 32 &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 140 &&
+             data.description is string && data.description.size() <= 600 &&
+             data.gradeLevel is string && data.gradeLevel.size() <= 40 &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidAssessment(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'classId', 'subjectId', 'competencyId', 'title', 'type', 'difficulty', 'isHighImpact', 'questions', 'createdByUid', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'classId', 'subjectId', 'competencyId', 'title', 'type', 'difficulty', 'isHighImpact', 'questions', 'createdByUid', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             isValidId(data.classId) &&
+             isValidId(data.subjectId) &&
+             isValidId(data.competencyId) &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 160 &&
+             data.type in ['Diagnostic Assessment', 'Revision Quiz', 'Multiple Choice', 'Short Answer'] &&
+             data.difficulty in ['Foundational', 'Intermediate', 'Advanced'] &&
+             data.isHighImpact is bool &&
+             data.questions is list && data.questions.size() >= 1 && data.questions.size() <= 40 &&
+             isValidId(data.createdByUid) &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidAssessmentResult(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'assessmentId', 'studentId', 'subjectId', 'competencyId', 'score', 'maxScore', 'percentage', 'teacherReviewed', 'submittedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'assessmentId', 'studentId', 'subjectId', 'competencyId', 'score', 'maxScore', 'percentage', 'teacherReviewed', 'aiPreliminaryFeedback', 'submittedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             isValidId(data.assessmentId) &&
+             isValidId(data.studentId) &&
+             isValidId(data.subjectId) &&
+             isValidId(data.competencyId) &&
+             data.score is number && data.score >= 0 &&
+             data.maxScore is number && data.maxScore > 0 &&
+             data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
+             data.teacherReviewed is bool &&
+             (!('aiPreliminaryFeedback' in data) || (data.aiPreliminaryFeedback is string && data.aiPreliminaryFeedback.size() <= 2000)) &&
+             isValidIsoTimestamp(data.submittedAt);
+    }
+
+    function isValidLearningActivity(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'classId', 'subjectId', 'competencyId', 'title', 'type', 'difficulty', 'origin', 'status', 'questions', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'classId', 'subjectId', 'competencyId', 'title', 'type', 'difficulty', 'origin', 'status', 'questions', 'scorePercentage', 'feedbackSummary', 'submittedAnswers', 'createdAt', 'updatedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             isValidId(data.studentId) &&
+             isValidId(data.classId) &&
+             isValidId(data.subjectId) &&
+             isValidId(data.competencyId) &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 180 &&
+             data.type in ['Multiple Choice', 'True or False', 'Short Answer', 'Practice Exercises', 'Diagnostic Assessment', 'Revision Quiz'] &&
+             data.difficulty in ['Foundational', 'Intermediate', 'Advanced'] &&
+             data.origin in ['AI_AUTONOMOUS', 'TEACHER_CREATED'] &&
+             data.status in ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'] &&
+             data.questions is list && data.questions.size() >= 1 && data.questions.size() <= 30 &&
+             (!('scorePercentage' in data) || (data.scorePercentage is number && data.scorePercentage >= 0 && data.scorePercentage <= 100)) &&
+             (!('feedbackSummary' in data) || (data.feedbackSummary is string && data.feedbackSummary.size() <= 2000)) &&
+             (!('submittedAnswers' in data) || (data.submittedAnswers is list && data.submittedAnswers.size() <= 30)) &&
+             isValidIsoTimestamp(data.createdAt) &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidLearningPath(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'subjectId', 'competencyId', 'title', 'educationalObjective', 'estimatedLevel', 'masteryCriterion', 'nextReviewDate', 'progressPercent', 'modules', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'subjectId', 'competencyId', 'title', 'educationalObjective', 'estimatedLevel', 'masteryCriterion', 'nextReviewDate', 'progressPercent', 'modules', 'updatedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             isValidId(data.studentId) &&
+             isValidId(data.subjectId) &&
+             isValidId(data.competencyId) &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 180 &&
+             data.educationalObjective is string && data.educationalObjective.size() <= 600 &&
+             data.estimatedLevel in ['Foundational', 'Developing', 'Proficient', 'Mastering'] &&
+             data.masteryCriterion is string && data.masteryCriterion.size() <= 240 &&
+             data.nextReviewDate is string && data.nextReviewDate.size() <= 40 &&
+             data.progressPercent is number && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+             data.modules is list && data.modules.size() >= 1 && data.modules.size() <= 15 &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidIntervention(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'subjectId', 'competencyId', 'sourceEventId', 'evidence', 'strategy', 'priority', 'status', 'contentSummary', 'activityIds', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'studentId', 'subjectId', 'competencyId', 'sourceEventId', 'evidence', 'strategy', 'priority', 'status', 'contentSummary', 'activityIds', 'outcomeSummary', 'createdAt', 'updatedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             isValidId(data.studentId) &&
+             isValidId(data.subjectId) &&
+             isValidId(data.competencyId) &&
+             data.sourceEventId is string && data.sourceEventId.size() <= 128 &&
+             data.evidence is string && data.evidence.size() <= 800 &&
+             data.strategy is string && data.strategy.size() <= 300 &&
+             data.priority in ['LOW', 'MEDIUM', 'HIGH'] &&
+             data.status in ['CREATED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REASSESSMENT_REQUIRED'] &&
+             data.contentSummary is string && data.contentSummary.size() <= 2000 &&
+             data.activityIds is list && data.activityIds.size() <= 20 &&
+             (!('outcomeSummary' in data) || (data.outcomeSummary is string && data.outcomeSummary.size() <= 800)) &&
+             isValidIsoTimestamp(data.createdAt) &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidLearningEvent(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'eventType', 'studentId', 'subjectId', 'competencyId', 'referenceId', 'idempotencyKey', 'status', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'eventType', 'studentId', 'subjectId', 'competencyId', 'referenceId', 'idempotencyKey', 'status', 'createdAt', 'processedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             data.eventType in ['AssessmentSubmitted', 'ActivityCompleted', 'LearningGoalUpdated', 'CompetencyMasteryChanged', 'StudentProgressUpdated'] &&
+             isValidId(data.studentId) &&
+             data.subjectId is string && data.subjectId.size() <= 128 &&
+             data.competencyId is string && data.competencyId.size() <= 128 &&
+             data.referenceId is string && data.referenceId.size() <= 128 &&
+             data.idempotencyKey is string && data.idempotencyKey.size() <= 160 &&
+             data.status in ['PENDING', 'PROCESSED', 'FAILED'] &&
+             isValidIsoTimestamp(data.createdAt) &&
+             (!('processedAt' in data) || isValidIsoTimestamp(data.processedAt));
+    }
+
+    function isValidAIInsight(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'eventId', 'studentId', 'pseudonymId', 'subjectId', 'competencyId', 'evidence', 'pedagogicalDiagnosis', 'priority', 'strategyChosen', 'learningObjective', 'confidence', 'engineSource', 'observedOutcome', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentOwnerUid', 'eventId', 'studentId', 'pseudonymId', 'subjectId', 'competencyId', 'evidence', 'pedagogicalDiagnosis', 'priority', 'strategyChosen', 'learningObjective', 'confidence', 'engineSource', 'observedOutcome', 'generatedActivityId', 'interventionId', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.studentOwnerUid is string && data.studentOwnerUid.size() <= 128 &&
+             data.eventId is string && data.eventId.size() <= 128 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.pseudonymId is string && data.pseudonymId.size() <= 64 &&
+             data.subjectId is string && data.subjectId.size() <= 128 &&
+             data.competencyId is string && data.competencyId.size() <= 128 &&
+             data.evidence is string && data.evidence.size() <= 1000 &&
+             data.pedagogicalDiagnosis is string && data.pedagogicalDiagnosis.size() <= 1500 &&
+             data.priority in ['LOW', 'MEDIUM', 'HIGH'] &&
+             data.strategyChosen is string && data.strategyChosen.size() <= 400 &&
+             data.learningObjective is string && data.learningObjective.size() <= 400 &&
+             data.confidence is number && data.confidence >= 0 && data.confidence <= 1 &&
+             data.engineSource in ['GEMINI', 'DEMO_RULES', 'RULE_ENGINE_FALLBACK'] &&
+             data.observedOutcome is string && data.observedOutcome.size() <= 600 &&
+             (!('generatedActivityId' in data) || (data.generatedActivityId is string && data.generatedActivityId.size() <= 128)) &&
+             (!('interventionId' in data) || (data.interventionId is string && data.interventionId.size() <= 128)) &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'actorUid', 'actorType', 'action', 'targetCollection', 'targetId', 'summary', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'actorUid', 'actorType', 'action', 'targetCollection', 'targetId', 'summary', 'createdAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             data.actorUid is string && data.actorUid.size() <= 128 &&
+             data.actorType in ['AI_ENGINE', 'ADMIN', 'TEACHER', 'STUDENT'] &&
+             data.action is string && data.action.size() <= 120 &&
+             data.targetCollection is string && data.targetCollection.size() <= 64 &&
+             data.targetId is string && data.targetId.size() <= 128 &&
+             data.summary is string && data.summary.size() <= 600 &&
+             isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidConsentRecord(data) {
+      return data.keys().hasAll(['id', 'institutionId', 'staffUids', 'studentId', 'guardianConsentStatus', 'dataMinimizationAccepted', 'retentionPolicyDays', 'updatedByUid', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'institutionId', 'staffUids', 'studentId', 'guardianConsentStatus', 'dataMinimizationAccepted', 'retentionPolicyDays', 'updatedByUid', 'updatedAt']) &&
+             isValidId(data.id) &&
+             isValidId(data.institutionId) &&
+             isValidStaffList(data.staffUids) &&
+             isValidId(data.studentId) &&
+             data.guardianConsentStatus in ['VERIFIED', 'PENDING', 'REVOKED'] &&
+             data.dataMinimizationAccepted is bool &&
+             data.retentionPolicyDays is int && data.retentionPolicyDays >= 30 && data.retentionPolicyDays <= 1825 &&
+             data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+             isValidIsoTimestamp(data.updatedAt);
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+    match /institutions/{institutionId} {
+      allow get: if isValidId(institutionId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isVerifiedUser() &&
+                       isValidId(institutionId) &&
+                       isValidInstitution(incoming()) &&
+                       incoming().id == institutionId &&
+                       incoming().ownerUid == request.auth.uid &&
+                       request.auth.uid in incoming().staffUids;
+      allow update: if isVerifiedUser() &&
+                       isValidId(institutionId) &&
+                       isValidInstitution(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (isBootstrappedAdmin() || existing().ownerUid == request.auth.uid) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'staffUids', 'retentionDays']);
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    match /institutionDirectory/{joinCode} {
+      allow get: if isVerifiedUser() && isValidId(joinCode);
+      allow list: if false;
+      allow create: if isVerifiedUser() &&
+                       isValidId(joinCode) &&
+                       isValidInstitutionDirectory(incoming()) &&
+                       incoming().joinCode == joinCode &&
+                       incoming().ownerUid == request.auth.uid &&
+                       exists(/databases/$(database)/documents/institutions/$(incoming().institutionId));
+      allow update, delete: if isBootstrappedAdmin() || (isVerifiedUser() && existing().ownerUid == request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isBootstrappedAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().uid == request.auth.uid);
+      allow create: if isVerifiedUser() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().uid == request.auth.uid &&
+                       userId == request.auth.uid &&
+                       (
+                         isBootstrappedAdmin() ||
+                         incoming().role == 'STUDENT' ||
+                         (
+                           incoming().role in ['ADMIN', 'TEACHER'] &&
+                           exists(/databases/$(database)/documents/institutions/$(incoming().institutionId)) &&
+                           request.auth.uid in get(/databases/$(database)/documents/institutions/$(incoming().institutionId)).data.staffUids
+                         )
+                       );
+      allow update: if isVerifiedUser() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().uid == existing().uid &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isBootstrappedAdmin() ||
+                         (
+                           request.auth.uid == userId &&
+                           incoming().role == existing().role &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isBootstrappedAdmin();
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && (isBootstrappedAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && request.auth.uid == userId);
+        allow create: if isVerifiedUser() &&
+                         isValidId(userId) &&
+                         isValidId(docId) &&
+                         request.auth.uid == userId &&
+                         isValidUserPrivateInfo(incoming()) &&
+                         incoming().uid == request.auth.uid;
+        allow update: if isVerifiedUser() &&
+                         isValidId(userId) &&
+                         isValidId(docId) &&
+                         request.auth.uid == userId &&
+                         isValidUserPrivateInfo(incoming()) &&
+                         incoming().uid == existing().uid &&
+                         incoming().institutionId == existing().institutionId &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+        allow delete: if isBootstrappedAdmin() || (isVerifiedUser() && request.auth.uid == userId);
+      }
+    }
+
+    match /classes/{classId} {
+      allow get: if isValidId(classId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(classId) &&
+                       isValidSchoolClass(incoming()) &&
+                       incoming().id == classId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(classId) &&
+                       isValidSchoolClass(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'gradeLevel', 'academicYear', 'teacherUid', 'teacherName', 'staffUids']);
+      allow delete: if isValidId(classId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /students/{studentId} {
+      allow get: if isValidId(studentId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(studentId) &&
+                       isValidStudent(incoming()) &&
+                       incoming().id == studentId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(studentId) &&
+                       isValidStudent(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (
+                           isInstitutionStaff(existing().institutionId) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['classId', 'displayName', 'gradeLevel', 'pedagogicalStatus', 'averageScore', 'completionRate', 'subjectIds', 'studentOwnerUid', 'staffUids', 'updatedAt'])
+                         ) ||
+                         (
+                           isStudentOwner(existing().studentOwnerUid) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['averageScore', 'completionRate', 'pedagogicalStatus', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isValidId(studentId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /subjects/{subjectId} {
+      allow get: if isValidId(subjectId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(subjectId) &&
+                       isValidSubject(incoming()) &&
+                       incoming().id == subjectId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(subjectId) &&
+                       isValidSubject(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'staffUids']);
+      allow delete: if isValidId(subjectId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /competencies/{competencyId} {
+      allow get: if isValidId(competencyId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(competencyId) &&
+                       isValidCompetency(incoming()) &&
+                       incoming().id == competencyId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(competencyId) &&
+                       isValidCompetency(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'gradeLevel', 'staffUids']);
+      allow delete: if isValidId(competencyId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /assessments/{assessmentId} {
+      allow get: if isValidId(assessmentId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(assessmentId) &&
+                       isValidAssessment(incoming()) &&
+                       incoming().id == assessmentId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(assessmentId) &&
+                       isValidAssessment(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'difficulty', 'questions', 'staffUids']);
+      allow delete: if isValidId(assessmentId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /assessmentResults/{resultId} {
+      allow get: if isValidId(resultId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(resultId) &&
+                       isValidAssessmentResult(incoming()) &&
+                       incoming().id == resultId &&
+                       (
+                         isInstitutionStaff(incoming().institutionId) ||
+                         (isStudentOwner(incoming().studentOwnerUid) && incoming().teacherReviewed == false)
+                       );
+      allow update: if isValidId(resultId) &&
+                       isValidAssessmentResult(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().studentId == existing().studentId &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['score', 'percentage', 'teacherReviewed', 'aiPreliminaryFeedback']);
+      allow delete: if isValidId(resultId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /activities/{activityId} {
+      allow get: if isValidId(activityId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(activityId) &&
+                       isValidLearningActivity(incoming()) &&
+                       incoming().id == activityId &&
+                       (isInstitutionStaff(incoming().institutionId) || isStudentOwner(incoming().studentOwnerUid));
+      allow update: if isValidId(activityId) &&
+                       isValidLearningActivity(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().studentId == existing().studentId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (
+                           isInstitutionStaff(existing().institutionId) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'scorePercentage', 'feedbackSummary', 'submittedAnswers', 'title', 'difficulty', 'questions', 'updatedAt'])
+                         ) ||
+                         (
+                           isStudentOwner(existing().studentOwnerUid) &&
+                           existing().status != 'COMPLETED' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'scorePercentage', 'feedbackSummary', 'submittedAnswers', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isValidId(activityId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /learningPaths/{pathId} {
+      allow get: if isValidId(pathId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(pathId) &&
+                       isValidLearningPath(incoming()) &&
+                       incoming().id == pathId &&
+                       (isInstitutionStaff(incoming().institutionId) || isStudentOwner(incoming().studentOwnerUid));
+      allow update: if isValidId(pathId) &&
+                       isValidLearningPath(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().studentId == existing().studentId &&
+                       (
+                         (
+                           isInstitutionStaff(existing().institutionId) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'educationalObjective', 'estimatedLevel', 'masteryCriterion', 'nextReviewDate', 'progressPercent', 'modules', 'updatedAt'])
+                         ) ||
+                         (
+                           isStudentOwner(existing().studentOwnerUid) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['estimatedLevel', 'nextReviewDate', 'progressPercent', 'modules', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isValidId(pathId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /interventions/{interventionId} {
+      allow get: if isValidId(interventionId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(interventionId) &&
+                       isValidIntervention(incoming()) &&
+                       incoming().id == interventionId &&
+                       (isInstitutionStaff(incoming().institutionId) || isStudentOwner(incoming().studentOwnerUid));
+      allow update: if isValidId(interventionId) &&
+                       isValidIntervention(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().studentId == existing().studentId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (
+                           isInstitutionStaff(existing().institutionId) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'priority', 'strategy', 'contentSummary', 'activityIds', 'outcomeSummary', 'updatedAt'])
+                         ) ||
+                         (
+                           isStudentOwner(existing().studentOwnerUid) &&
+                           existing().status != 'COMPLETED' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'outcomeSummary', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isValidId(interventionId) && isInstitutionStaff(existing().institutionId);
+    }
+
+    match /learningEvents/{eventId} {
+      allow get: if isValidId(eventId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(eventId) &&
+                       isValidLearningEvent(incoming()) &&
+                       incoming().id == eventId &&
+                       (isInstitutionStaff(incoming().institutionId) || isStudentOwner(incoming().studentOwnerUid));
+      allow update: if isValidId(eventId) &&
+                       isValidLearningEvent(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       incoming().idempotencyKey == existing().idempotencyKey &&
+                       existing().status != 'PROCESSED' &&
+                       (isInstitutionStaff(existing().institutionId) || isStudentOwner(existing().studentOwnerUid)) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'processedAt']);
+      allow delete: if false;
+    }
+
+    match /aiInsights/{insightId} {
+      allow get: if isValidId(insightId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids) || isStudentOwner(existing().studentOwnerUid);
+      allow create: if isValidId(insightId) &&
+                       isValidAIInsight(incoming()) &&
+                       incoming().id == insightId &&
+                       (isInstitutionStaff(incoming().institutionId) || isStudentOwner(incoming().studentOwnerUid));
+      allow update: if isValidId(insightId) &&
+                       isValidAIInsight(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['observedOutcome']);
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(logId) &&
+                       isValidAuditLog(incoming()) &&
+                       incoming().id == logId &&
+                       (isInstitutionStaff(incoming().institutionId) || (isVerifiedUser() && incoming().actorUid == request.auth.uid));
+      allow update, delete: if false;
+    }
+
+    match /consentRecords/{consentId} {
+      allow get: if isValidId(consentId) && (isBootstrappedAdmin() || isStaffMember(existing().staffUids));
+      allow list: if isBootstrappedAdmin() || isStaffMember(existing().staffUids);
+      allow create: if isValidId(consentId) &&
+                       isValidConsentRecord(incoming()) &&
+                       incoming().id == consentId &&
+                       isInstitutionStaff(incoming().institutionId);
+      allow update: if isValidId(consentId) &&
+                       isValidConsentRecord(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().institutionId == existing().institutionId &&
+                       isInstitutionStaff(existing().institutionId) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['guardianConsentStatus', 'dataMinimizationAccepted', 'retentionPolicyDays', 'updatedByUid', 'updatedAt']);
+      allow delete: if isValidId(consentId) && isInstitutionStaff(existing().institutionId);
+    }
+  }
+}

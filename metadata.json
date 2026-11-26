@@ -1,0 +1,8 @@
+{
+  "name": "EduPulse AI",
+  "description": "Autonomous Learning Intelligence Platform — The future of personalized education.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
